@@ -13,6 +13,7 @@
 #include <climits>
 #include <deque>
 #include <map>
+#include <thread>
 
 #include "areas.h"
 #include "branch.h"
@@ -37,6 +38,7 @@
 #include "mon-util.h"
 #include "newgame-def.h"
 #include "options.h"
+#include "outer-menu.h"
 #include "player.h"
 #include "prompt.h"
 #include "quiver.h"
@@ -663,11 +665,31 @@ context::~context()
 }
 
 // Text of the widgets in the topmost UI layout (popups, menus, the main
-// menu).
-static void _collect_text(ui::Widget *w, vector<string> &out)
+// menu). The text of the button with the focus (e.g. the game mode picked
+// in the main menu) goes to focus as well, and is marked with "> ".
+static void _collect_text(ui::Widget *w, vector<string> &out, string &focus)
 {
     if (!w || !w->is_visible())
         return;
+    if (auto button = dynamic_cast<MenuButton *>(w))
+    {
+        vector<string> inner;
+        string unused;
+        button->for_each_child_and_internal(
+            [&inner, &unused](shared_ptr<ui::Widget> &child) {
+                _collect_text(child.get(), inner, unused);
+            });
+        string s = join_strings(inner.begin(), inner.end(), " ");
+        if (s.empty())
+            return;
+        if (button->is_focused())
+        {
+            focus = s;
+            s = "> " + s;
+        }
+        out.push_back(s);
+        return;
+    }
     if (auto text = dynamic_cast<ui::Text *>(w))
     {
         const string s = trimmed_string(text->get_text().tostring());
@@ -678,11 +700,11 @@ static void _collect_text(ui::Widget *w, vector<string> &out)
     if (auto sw = dynamic_cast<ui::Switcher *>(w))
     {
         if (sw->num_children() > 0)
-            _collect_text(sw->current_widget().get(), out);
+            _collect_text(sw->current_widget().get(), out, focus);
         return;
     }
-    w->for_each_child_and_internal([&out](shared_ptr<ui::Widget> &child) {
-        _collect_text(child.get(), out);
+    w->for_each_child_and_internal([&out, &focus](shared_ptr<ui::Widget> &child) {
+        _collect_text(child.get(), out, focus);
     });
 }
 
@@ -732,8 +754,11 @@ static void _add_context(JsonNode *st)
     if (ui::has_layout())
     {
         vector<string> screen;
-        _collect_text(ui::top_layout().get(), screen);
+        string focus;
+        _collect_text(ui::top_layout().get(), screen, focus);
         _add(st, "screen", _strings(screen));
+        if (!focus.empty())
+            _add(st, "focus", focus);
     }
 }
 
@@ -841,6 +866,8 @@ static void _poll_inbox()
     }
 }
 
+static bool _write_state_file(JsonNode *st);
+
 static bool _write_state()
 {
     rng::generator ui_rng(rng::UI);
@@ -870,6 +897,12 @@ static bool _write_state()
         _add(st, "map", _map_json(_map_rows(), _vis_rows()));
     }
 
+    return _write_state_file(st);
+}
+
+// Writes st (and deletes it) as state.json, replacing it in one go.
+static bool _write_state_file(JsonNode *st)
+{
     char *s = json_stringify(st, " ");
     json_delete(st);
 
@@ -884,6 +917,35 @@ static bool _write_state()
     free(s);
     // Fails while someone has state.json open; the caller tries again.
     return ok && rename_u(tmp.c_str(), path.c_str()) == 0;
+}
+
+// The last state.json: crawl is gone, so nobody waits for it in vain.
+void on_exit(int exit_code, const string &message)
+{
+    if (!_live_enabled() || !live.dir_ready)
+        return;
+    JsonNode *st = json_mkobject();
+    _add(st, "seq", (double)++live.seq);
+    _add(st, "inputs", (double)live.inputs);
+    _add(st, "w", (double)_epoch_ms());
+    _add(st, "game", false);
+    _add(st, "context", "exited");
+    _add(st, "exited", true);
+    _add(st, "exit_code", (double)exit_code);
+    if (!message.empty())
+        _add(st, "error", trimmed_string(message));
+    JsonNode *msgs = json_mkarray();
+    for (const message_entry &msg : live.messages)
+        json_append_element(msgs, _message_json(msg, false));
+    _add(st, "messages", msgs);
+    // No later chance: wait out a reader that has state.json open.
+    const string last = _encode(st);
+    for (int tries = 0; tries < 50; ++tries)
+    {
+        if (_write_state_file(json_decode(last.c_str())))
+            break;
+        this_thread::sleep_for(chrono::milliseconds(10));
+    }
 }
 
 /////////////////////////////////////////////////////////////////////////////

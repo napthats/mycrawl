@@ -168,6 +168,9 @@ NORETURN void end(int exit_code, bool print_error, const char *format, ...)
                 error += "\n";
         }
 
+        // mycrawl: tell the live API before anything is torn down.
+        gameio::on_exit(exit_code, error);
+
         if (exit_code)
             fatal_error_notification(error);
 

@@ -79,6 +79,8 @@ namespace gameio
     void game_starting();
     void game_started(bool new_game, const newgame_def *ng);
     void game_ended(game_exit exit, const string &message);
+    // crawl is exiting (from end()): state.json says so.
+    void on_exit(int exit_code, const string &message);
 
     // Hooks.
     void on_message(int channel, const string &text);

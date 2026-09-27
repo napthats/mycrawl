@@ -33,6 +33,8 @@ public:
     string description;
 
     bool activate();
+    // mycrawl: for gameio, which reports the button with the focus.
+    bool is_focused() const { return focused; }
 
 #ifdef USE_TILE_WEB
     void serialize();
