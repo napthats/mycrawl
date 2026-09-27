@@ -55,6 +55,7 @@
 #include "message.h"
 #include "mon-util.h"
 #include "monster.h"
+#include "mycrawl-save.h"
 #include "newgame.h"
 #include "options.h"
 #include "playable.h"
@@ -121,6 +122,7 @@ game_options &get_default_options()
 
 static string _get_save_path(string subdir);
 static bool _set_crawl_dir(const string &d);
+static string _find_executable_path();
 static string _resolve_dir(string path, string suffix);
 static string _supported_language_listing();
 
@@ -4707,6 +4709,21 @@ void get_system_environment()
                         B_PATH_NAME_LENGTH);
 
         SysEnv.crawl_dir = catpath(std::string(path), "/crawl");
+    }
+#endif
+
+#if !defined(DGAMELAUNCH) && !defined(SAVE_DIR_PATH)
+    // mycrawl: keep saves outside the repository, in a directory per save
+    // generation. CRAWL_DIR and -dir still override this.
+    if (SysEnv.crawl_dir.empty())
+    {
+        const string exe_path = _find_executable_path();
+        if (!exe_path.empty())
+        {
+            SysEnv.crawl_dir = get_parent_directory(exe_path)
+                               + MYCRAWL_SAVE_ROOT
+                               MYCRAWL_SAVE_GENERATION "/";
+        }
     }
 #endif
 
