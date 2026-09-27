@@ -938,6 +938,7 @@ const vector<GameOption*> game_options::build_options_list()
              {"auto", SCREENMODE_AUTO}}, true),
         new MaybeBoolGameOption(SIMPLE_NAME(tile_use_small_layout),
                                                 maybe_bool::maybe, {"auto"}),
+        new BoolGameOption(SIMPLE_NAME(tile_show_tabs), true),
 #endif
         // the following intentionally lack a DisabledGameOption counterpart;
         // make it easier to past between tiles / non-tiles builds, and also

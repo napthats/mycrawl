@@ -1196,6 +1196,18 @@ void TilesFramework::layout_statcol()
         m_layers[LAYER_NORMAL].m_regions.pop_back();
     }
 
+    // mycrawl: the tabbed region can be hidden with tile_show_tabs (the small
+    // layout always needs it).
+    const bool show_tabs = use_small_layout || Options.tile_show_tabs;
+    {
+        auto &regions = m_layers[LAYER_NORMAL].m_regions;
+        const auto tab_it = find(regions.begin(), regions.end(), m_region_tab);
+        if (show_tabs && tab_it == regions.end())
+            regions.push_back(m_region_tab);
+        else if (!show_tabs && tab_it != regions.end())
+            regions.erase(tab_it);
+    }
+
     if (use_small_layout)
     {
         // * commands will be on right as tabs
@@ -1213,26 +1225,35 @@ void TilesFramework::layout_statcol()
 
         m_statcol_top = m_region_stat->ey;
 
-        // Set the inventory region to minimal size.
-        m_region_tab->set_small_layout(false, m_windowsz);
-        m_region_tab->place(m_stat_col, m_statcol_top);
-        m_region_tab->resize_to_fit(m_windowsz.x - m_region_tab->sx,
-                                    m_windowsz.y - m_region_tab->sy);
-        // region extends ~1/2-tile beyond window (rendered area touches right edge)
-        m_region_tab->resize(m_region_tab->mx+1, min_inv_height);
-        m_region_tab->place(m_stat_col, m_windowsz.y - m_region_tab->wy);
-        m_statcol_bottom = m_region_tab->sy - m_tab_margin;
+        if (show_tabs)
+        {
+            // Set the inventory region to minimal size.
+            m_region_tab->set_small_layout(false, m_windowsz);
+            m_region_tab->place(m_stat_col, m_statcol_top);
+            m_region_tab->resize_to_fit(m_windowsz.x - m_region_tab->sx,
+                                        m_windowsz.y - m_region_tab->sy);
+            // region extends ~1/2-tile beyond window (rendered area touches right edge)
+            m_region_tab->resize(m_region_tab->mx+1, min_inv_height);
+            m_region_tab->place(m_stat_col, m_windowsz.y - m_region_tab->wy);
+            m_statcol_bottom = m_region_tab->sy - m_tab_margin;
+        }
+        else
+            m_statcol_bottom = m_windowsz.y;
 
         m_region_stat->resize(m_region_stat->mx, min_stat_height);
         m_statcol_top += m_region_stat->dy;
-        bool resized_inventory = false;
+        // without the tabbed region there is no inventory to resize
+        bool resized_inventory = !show_tabs;
 
         for (const string &str : Options.tile_layout_priority)
         {
             if (str == "inventory")
             {
-                resize_inventory();
-                resized_inventory = true;
+                if (show_tabs)
+                {
+                    resize_inventory();
+                    resized_inventory = true;
+                }
             }
             else if (str == "minimap" || str == "map")
             {
@@ -1251,10 +1272,36 @@ void TilesFramework::layout_statcol()
         {
             autosize_minimap();
 
+            // mycrawl: without the tabbed region, keep the minimap right
+            // below the stats instead of centering it, as in WebTiles.
+            int map_bottom = m_statcol_bottom;
+            if (!show_tabs)
+            {
+                map_bottom = min(map_bottom, m_region_stat->ey
+                                 + m_region_map->dy * GYM + map_margin * 2);
+            }
             m_region_map->place(m_region_stat->sx, m_region_stat->ey,
-                                m_region_stat->ex, m_statcol_bottom,
+                                m_region_stat->ex, map_bottom,
                                 map_margin);
             tile_new_level(false, false);
+        }
+
+        // mycrawl: likewise, stack the remaining tabs right below the
+        // minimap (or the stats) instead of at the bottom of the window.
+        if (!show_tabs && !m_tabs.empty())
+        {
+            int tabs_top = m_windowsz.y;
+            for (tab_iterator it = m_tabs.begin(); it != m_tabs.end(); ++it)
+                tabs_top = min(tabs_top, it->second->sy);
+            const int target = (m_region_map ? m_region_map->ey
+                                             : m_region_stat->ey)
+                               + m_tab_margin;
+            const int delta_y = tabs_top - target;
+            if (delta_y > 0)
+            {
+                for (tab_iterator it = m_tabs.begin(); it != m_tabs.end(); ++it)
+                    it->second->place(it->second->sx, it->second->sy - delta_y);
+            }
         }
     }
 }

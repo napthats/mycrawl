@@ -2509,6 +2509,14 @@ tile_use_small_layout = auto
         enabled when the available horizontal space is not enough to display the
         normal layout in a comfortable way.
 
+tile_show_tabs = true
+        If false, the tabbed region at the bottom right of the screen
+        (inventory and the other clickable tabs) is not shown, and the space
+        below the stat area is given to the elements listed in
+        tile_layout_priority. For a WebTiles-like sidebar, use this with
+        `tile_layout_priority = minimap, monster`. Has no effect with the small
+        layout. Local tiles only.
+
 tile_font_crt_file  = VeraMono.ttf
 tile_font_stat_file = VeraMono.ttf
 tile_font_msg_file  = VeraMono.ttf
