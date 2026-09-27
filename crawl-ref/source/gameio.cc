@@ -785,6 +785,9 @@ struct live_state
     bool dir_ready = false;
     string dir;
     deque<int> keys;
+    // The name of the last inbox file queued. state.json is only written
+    // once the queue is empty, so it tells that file's keys are all taken.
+    string keys_done;
     // The state changed since state.json was last written.
     bool dirty = true;
     int seq = 0;
@@ -866,6 +869,8 @@ static void _poll_inbox()
         }
         for (int key : parse_keyseq(content))
             live.keys.push_back(key);
+        live.keys_done = name.substr(0, name.size() - strlen(".keys"));
+        live.dirty = true;
     }
 }
 
@@ -878,6 +883,8 @@ static bool _write_state()
     JsonNode *st = json_mkobject();
     _add(st, "seq", (double)++live.seq);
     _add(st, "inputs", (double)live.inputs);
+    if (!live.keys_done.empty())
+        _add(st, "keys_done", live.keys_done);
     _add(st, "w", (double)_epoch_ms());
     _add(st, "game", crawl_state.game_started);
     _add_context(st);
