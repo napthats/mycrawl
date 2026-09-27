@@ -41,4 +41,7 @@ void write_spellset(const spellset &spells,
                        const item_def* const source_item,
                        const monster_info *mon_owner = nullptr);
 string describe_item_spells(const item_def &item);
+string monster_spell_effect(spell_type spell, const monster_info &mi,
+                            bool is_wand);
+string monster_spell_range(spell_type spell, const monster_info &mi);
 string terse_spell_list(const item_def &item);

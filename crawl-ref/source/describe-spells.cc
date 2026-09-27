@@ -735,6 +735,24 @@ static void _describe_book(const spellbook_contents &book,
  *                          description, 'mon_owner' is that monster. Else,
  *                          it's null.
  */
+/**
+ * The effect (damage, or chance to affect you) of a monster's spell, as
+ * its description lists it, without markup. For the live API.
+ */
+string monster_spell_effect(spell_type spell, const monster_info &mi,
+                            bool is_wand)
+{
+    return formatted_string::parse_string(
+        _effect_string(spell, &mi, is_wand)).tostring();
+}
+
+/// The range of a monster's spell, as its description lists it.
+string monster_spell_range(spell_type spell, const monster_info &mi)
+{
+    return formatted_string::parse_string(
+        _range_string(spell, &mi, mi.spell_hd())).tostring();
+}
+
 void describe_spellset(const spellset &spells,
                        const item_def* const source_item,
                        formatted_string &description,

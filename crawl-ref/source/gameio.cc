@@ -20,6 +20,7 @@
 #include "cio.h"
 #include "cloud.h"
 #include "coordit.h"
+#include "describe-spells.h"
 #include "directn.h"
 #include "env.h"
 #include "files.h"
@@ -325,8 +326,38 @@ static const char *_threat_name(mon_threat_level_type threat)
     }
 }
 
-// Monsters that are shown on the map, in view or detected.
-static JsonNode *_monsters_json()
+// A monster's spells, as its description (x, v) lists them: grouped as
+// there by how they are cast (which tells e.g. whether silence stops them),
+// with the effect (damage, or chance to affect you) and range.
+static JsonNode *_monster_spells_json(const monster_info &mi)
+{
+    JsonNode *books = json_mkarray();
+    for (const spellbook_contents &book : monster_spellset(mi))
+    {
+        JsonNode *b = json_mkobject();
+        _add(b, "label", trimmed_string(book.label));
+        JsonNode *spells = json_mkarray();
+        for (const spell_type spell : book.spells)
+        {
+            JsonNode *sp = json_mkobject();
+            _add(sp, "name", spell_title(spell));
+            const string effect = monster_spell_effect(spell, mi, book.is_wand);
+            if (!effect.empty())
+                _add(sp, "effect", effect);
+            const string range = monster_spell_range(spell, mi);
+            if (!range.empty())
+                _add(sp, "range", range);
+            json_append_element(spells, sp);
+        }
+        _add(b, "spells", spells);
+        json_append_element(books, b);
+    }
+    return books;
+}
+
+// Monsters that are shown on the map, in view or detected. With spells
+// only for the live API, to keep the records small.
+static JsonNode *_monsters_json(bool spells = false)
 {
     JsonNode *a = json_mkarray();
     for (rectangle_iterator ri(0); ri; ++ri)
@@ -344,6 +375,8 @@ static JsonNode *_monsters_json()
         _add(m, "health", get_damage_level_string(mi->holi, mi->dam));
         _add(m, "attrs", _strings(mi->attributes()));
         _add(m, "in_view", you.see_cell(*ri));
+        if (spells && mi->has_spells())
+            _add(m, "spells", _monster_spells_json(*mi));
         json_append_element(a, m);
     }
     return a;
@@ -974,7 +1007,7 @@ static bool _write_state()
     if (crawl_state.game_started)
     {
         _add(st, "you", _player_json());
-        _add(st, "mons", _monsters_json());
+        _add(st, "mons", _monsters_json(true));
         _add(st, "items", _floor_items_json(true));
         _add(st, "terrain", _terrain_json());
         _add(st, "clouds", _clouds_json());
