@@ -132,7 +132,8 @@ int yesno(const char *str, bool allow_lowercase, int default_answer, bool clear_
            bool interrupt_delays, bool noprompt,
            const explicit_keymap *map, bool allow_popup, bool ask_always)
 {
-    gameio::context gameio_ctx("yesno", str);
+    // str is null for prompts already printed by the caller (shops).
+    gameio::context gameio_ctx("yesno", str ? str : "");
     if (interrupt_delays && !crawl_state.is_repeating_cmd())
         interrupt_activity(activity_interrupt::force);
 
