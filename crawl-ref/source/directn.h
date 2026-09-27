@@ -18,6 +18,7 @@
 using std::vector;
 
 struct describe_info;
+struct JsonNode;
 
 class range_view_annotator
 {
@@ -130,6 +131,8 @@ public:
     bool noninteractive();
     bool choose_direction();
     string target_description() const;
+    // mycrawl: the target, range and beam or area, for the gameio live API.
+    JsonNode *gameio_json() const;
 
 private:
     void update_validity();

@@ -616,6 +616,7 @@ struct context_entry
     string name;
     string text;
     const Menu *menu;
+    function<JsonNode *()> detail;
 };
 
 static vector<context_entry> contexts;
@@ -627,12 +628,17 @@ context::context(const char *name, const string &text)
     string t = text;
     if (t.empty() && !contexts.empty() && contexts.back().name == name)
         t = contexts.back().text;
-    contexts.push_back({ name, t, nullptr });
+    contexts.push_back({ name, t, nullptr, nullptr });
 }
 
 context::context(const Menu *menu)
 {
-    contexts.push_back({ "menu", "", menu });
+    contexts.push_back({ "menu", "", menu , nullptr });
+}
+
+context::context(const char *name, function<JsonNode *()> detail)
+{
+    contexts.push_back({ name, "", nullptr, std::move(detail) });
 }
 
 context::~context()
@@ -669,6 +675,7 @@ static void _add_context(JsonNode *st)
     string name;
     string text;
     const Menu *menu = nullptr;
+    JsonNode *detail = nullptr;
     if (!contexts.empty())
     {
         name = contexts.back().name;
@@ -679,6 +686,13 @@ static void _add_context(JsonNode *st)
         {
             name = "popup";
             menu = nullptr;
+        }
+        // No detail: the same.
+        if (contexts.back().detail)
+        {
+            detail = contexts.back().detail();
+            if (!detail)
+                name = "popup";
         }
     }
     if (name.empty())
@@ -697,6 +711,8 @@ static void _add_context(JsonNode *st)
         _add(st, "prompt", text);
     if (menu)
         _add(st, "menu", menu->gameio_json());
+    if (detail)
+        _add(st, name.c_str(), detail);
     if (ui::has_layout())
     {
         vector<string> screen;

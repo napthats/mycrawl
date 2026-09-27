@@ -37,6 +37,7 @@
 #include "item-prop.h"
 #include "item-status-flag-type.h"
 #include "items.h"
+#include "json.h"
 #include "libutil.h"
 #include "losglobal.h"
 #include "macro.h"
@@ -2667,7 +2668,6 @@ bool direction_chooser::noninteractive()
 
 bool direction_chooser::choose_direction()
 {
-    gameio::context gameio_ctx("target");
 #ifdef USE_TILE
     ui::cutoff_point ui_cutoff_point;
 #endif
@@ -2712,6 +2712,10 @@ bool direction_chooser::choose_direction()
     need_text_redraw = false;
 
     auto directn_view = make_shared<UIDirectionChooserView>(*this);
+    // For the live API: the target, while nothing is shown over it.
+    gameio::context gameio_ctx("target", [this, &directn_view]() -> JsonNode * {
+        return ui::top_layout() == directn_view ? gameio_json() : nullptr;
+    });
 
 #ifdef USE_TILE_LOCAL
     unwind_bool inhibit_rendering(ui::should_render_current_regions, false);
@@ -3716,4 +3720,72 @@ vector<string> targeting_behaviour::get_monster_desc(const monster_info& mi)
     if (get_desc_func)
         _append_container(descs, (get_desc_func)(mi));
     return descs;
+}
+
+static JsonNode *_gameio_pos(const coord_def &p)
+{
+    JsonNode *a = json_mkarray();
+    json_append_element(a, json_mknumber(p.x));
+    json_append_element(a, json_mknumber(p.y));
+    return a;
+}
+
+JsonNode *direction_chooser::gameio_json() const
+{
+    JsonNode *t = json_mkobject();
+    json_append_member(t, "pos", _gameio_pos(target()));
+    json_append_member(t, "rel", _gameio_pos(target() - you.pos()));
+    json_append_member(t, "in_range", json_mkbool(in_range(target())));
+    json_append_member(t, "in_view", json_mkbool(you.see_cell(target())));
+    json_append_member(t, "just_looking", json_mkbool(just_looking));
+#ifdef USE_TILE
+    json_append_member(t, "cell",
+                       json_mkstring(get_cell_mouseover_tag(target())));
+#endif
+
+    // What the view shows: the cells a targeter would affect, or the beam.
+    // (As in draw_beam().)
+    if (hitfunc)
+    {
+        if (!behaviour->targeted() || hitfunc->set_aim(target()))
+        {
+            static const char *names[] = { "tracer", "no", "maybe", "yes",
+                                           "landing", "multiple" };
+            JsonNode *area = json_mkarray();
+            const los_type los = hitfunc->can_affect_unseen() ? LOS_NONE
+                                                              : LOS_DEFAULT;
+            for (radius_iterator ri(you.pos(), los); ri; ++ri)
+            {
+                const aff_type aff = hitfunc->is_affected(*ri);
+                if (!aff || feat_is_solid(env.grid(*ri))
+                            && !hitfunc->can_affect_walls() && !monster_at(*ri))
+                {
+                    continue;
+                }
+                JsonNode *cell = json_mkobject();
+                json_append_member(cell, "pos", _gameio_pos(*ri));
+                json_append_member(cell, "aff", json_mkstring(
+                    aff >= AFF_TRACER && aff <= AFF_MULTIPLE ? names[aff + 1]
+                                                             : "yes"));
+                json_append_element(area, cell);
+            }
+            json_append_member(t, "area", area);
+        }
+    }
+    else if (have_beam && you.see_cell(target()))
+    {
+        JsonNode *path = json_mkarray();
+        ray_def ray = beam;
+        for (; ray.pos() != target(); ray.advance())
+        {
+            if (ray.pos() == you.pos())
+                continue;
+            JsonNode *cell = json_mkobject();
+            json_append_member(cell, "pos", _gameio_pos(ray.pos()));
+            json_append_member(cell, "in_range", json_mkbool(in_range(ray.pos())));
+            json_append_element(path, cell);
+        }
+        json_append_member(t, "path", path);
+    }
+    return t;
 }

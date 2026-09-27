@@ -37,6 +37,7 @@ using std::vector;
 
 class ghost_demon;
 class Menu;
+struct JsonNode;
 struct newgame_def;
 struct wm_event;
 
@@ -66,6 +67,9 @@ namespace gameio
     public:
         context(const char *name, const string &text = "");
         context(const Menu *menu);
+        // detail() gives more about the input, under the context's name in
+        // the state (e.g. the target of the direction chooser).
+        context(const char *name, std::function<JsonNode *()> detail);
         ~context();
     };
 
