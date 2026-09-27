@@ -44,6 +44,7 @@
 #include "species.h"
 #include "spl-cast.h"
 #include "spl-util.h"
+#include "stash.h"
 #include "state.h"
 #include "status.h"
 #include "stringutil.h"
@@ -345,6 +346,16 @@ static JsonNode *_floor_items_json(bool all_known)
         _add(it, "name", item->name(DESC_A));
         _add(it, "pos", _pos(*ri));
         _add(it, "more", bool(cell.flags & MAP_MORE_ITEMS));
+        // The whole pile, as seen when last in view (the stash tracker's
+        // memory, which the stash search shows too).
+        const vector<item_def> pile = item_list_in_stash(*ri);
+        if (pile.size() > 1)
+        {
+            JsonNode *names = json_mkarray();
+            for (const item_def &pitem : pile)
+                json_append_element(names, json_mkstring(pitem.name(DESC_A)));
+            _add(it, "pile", names);
+        }
         json_append_element(a, it);
     }
     return a;
