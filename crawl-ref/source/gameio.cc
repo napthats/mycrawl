@@ -14,6 +14,7 @@
 #include <deque>
 #include <map>
 
+#include "areas.h"
 #include "branch.h"
 #include "cio.h"
 #include "cloud.h"
@@ -38,6 +39,7 @@
 #include "options.h"
 #include "player.h"
 #include "prompt.h"
+#include "quiver.h"
 #include "religion.h"
 #include "showsymb.h"
 #include "skills.h"
@@ -281,6 +283,20 @@ static JsonNode *_player_json()
     if (!you_worship(GOD_NO_GOD))
         _add(p, "piety_rank", (double)piety_rank());
     _add(p, "status", _strings(_status_lights()));
+    // The rest of the status panel: the noise bar (0-1000, and the band its
+    // colour shows), the quiver line and how long the last action took.
+    const bool silence = silenced(you.pos());
+    const int noise = silence ? 0 : you.get_noise_perception(true);
+    _add(p, "noise", (double)noise);
+    _add(p, "noise_level", silence       ? "silenced"
+                           : noise <= 333 ? "quiet"
+                           : noise <= 666 ? "loud"
+                           : noise < 1000 ? "very loud"
+                                          : "extremely loud");
+    _add(p, "quiver",
+         quiver::get_secondary_action()->quiver_description().tostring());
+    _add(p, "last_action_time",
+         (double)(you.elapsed_time - you.elapsed_time_at_last_input));
     return p;
 }
 
