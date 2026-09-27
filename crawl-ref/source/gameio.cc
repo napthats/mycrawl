@@ -205,6 +205,33 @@ static vector<string> _map_rows()
     return rows;
 }
 
+// What the player knows of each cell, in the shape of _map_rows(): V in view,
+// R remembered (seen before), M known without having been seen (magic
+// mapping and the like), space unknown.
+static vector<string> _vis_rows()
+{
+    vector<string> rows(GYM);
+    for (int y = 0; y < GYM; ++y)
+    {
+        string &row = rows[y];
+        for (int x = 0; x < GXM; ++x)
+        {
+            const coord_def p(x, y);
+            const map_cell &cell = env.map_knowledge(p);
+            if (you.see_cell(p))
+                row += 'V';
+            else if (cell.seen())
+                row += 'R';
+            else if (cell.known())
+                row += 'M';
+            else
+                row += ' ';
+        }
+        row.erase(row.find_last_not_of(' ') + 1);
+    }
+    return rows;
+}
+
 static vector<string> _status_lights()
 {
     vector<string> lights;
@@ -393,14 +420,16 @@ static string _state_hash(const vector<string> &rows)
     return make_stringf("%016" PRIx64, h);
 }
 
-// The known part of the level: rows from y0, each starting at x0.
-static JsonNode *_map_json(const vector<string> &rows)
+// The known part of the level: rows from y0, each starting at x0, and the
+// same part of vis (_vis_rows()).
+static JsonNode *_map_json(const vector<string> &rows, const vector<string> &vis)
 {
     int y0 = -1, y1 = -1;
     size_t x0 = SIZE_MAX;
     for (int y = 0; y < (int)rows.size(); ++y)
     {
-        const size_t first = rows[y].find_first_not_of(' ');
+        const size_t first = min(rows[y].find_first_not_of(' '),
+                                 vis[y].find_first_not_of(' '));
         if (first == string::npos)
             continue;
         if (y0 < 0)
@@ -419,6 +448,10 @@ static JsonNode *_map_json(const vector<string> &rows)
     for (int y = y0; y <= y1; ++y)
         json_append_element(a, json_mkstring(rows[y].substr(min(x0, rows[y].size()))));
     _add(m, "rows", a);
+    JsonNode *v = json_mkarray();
+    for (int y = y0; y <= y1; ++y)
+        json_append_element(v, json_mkstring(vis[y].substr(min(x0, vis[y].size()))));
+    _add(m, "vis", v);
     return m;
 }
 
@@ -647,7 +680,7 @@ static bool _write_state()
         _add(st, "inv", _inventory_json());
         _add(st, "spells", _spells_json());
         _add(st, "skills", _skills_json());
-        _add(st, "map", _map_json(_map_rows()));
+        _add(st, "map", _map_json(_map_rows(), _vis_rows()));
     }
 
     char *s = json_stringify(st, " ");
@@ -1197,7 +1230,7 @@ static void _replay_command_wait()
                 _add(s, "you", _player_json());
                 _add(s, "mons", _monsters_json());
                 _add(s, "inv", _inventory_json());
-                _add(s, "map", _map_json(rows));
+                _add(s, "map", _map_json(rows, _vis_rows()));
                 fprintf(rp.log, "%s\n", _encode(s).c_str());
                 fflush(rp.log);
             }
@@ -1289,6 +1322,7 @@ struct record_state
     // For the diffs in the command snapshots.
     string last_place;
     vector<string> last_rows;
+    vector<string> last_vis;
     string last_inv, last_spells, last_skills;
 
     // key_interrupt() calls since the last recorded input, and the call at
@@ -1576,6 +1610,23 @@ void on_note(int turn, const string &place, const string &text)
     _write_event(n);
 }
 
+// {"y": row} for the rows that differ from prev (empty: all rows differ), or
+// nullptr if none do.
+static JsonNode *_changed_rows(const vector<string> &rows,
+                               const vector<string> &prev)
+{
+    JsonNode *changed = nullptr;
+    for (int y = 0; y < (int)rows.size(); ++y)
+    {
+        if (rows[y] == (prev.empty() ? string() : prev[y]))
+            continue;
+        if (!changed)
+            changed = json_mkobject();
+        _add(changed, make_stringf("%d", y).c_str(), rows[y]);
+    }
+    return changed;
+}
+
 void on_command_wait()
 {
     if (rp.active)
@@ -1603,31 +1654,24 @@ void on_command_wait()
     _add_if_changed(c, "spells", _spells_json(), rec.last_spells);
     _add_if_changed(c, "skills", _skills_json(), rec.last_skills);
 
-    // Map rows that changed ("" for a row that was cleared); all non-empty
-    // rows on arriving at a level.
+    // Map (and visibility) rows that changed ("" for a row that was
+    // cleared); all non-empty rows on arriving at a level.
     const string place = _place();
     const bool full = place != rec.last_place || rec.last_rows.empty();
-    JsonNode *changed = json_mkobject();
-    bool any = false;
-    for (int y = 0; y < GYM; ++y)
-    {
-        const string prev = full ? "" : rec.last_rows[y];
-        if (rows[y] == prev)
-            continue;
-        _add(changed, make_stringf("%d", y).c_str(), rows[y]);
-        any = true;
-    }
-    if (full || any)
+    const vector<string> vis = _vis_rows();
+    JsonNode *changed = _changed_rows(rows, full ? vector<string>() : rec.last_rows);
+    JsonNode *vis_changed = _changed_rows(vis, full ? vector<string>() : rec.last_vis);
+    if (full || changed || vis_changed)
     {
         JsonNode *map = json_mkobject();
         _add(map, "full", full);
-        _add(map, "rows", changed);
+        _add(map, "rows", changed ? changed : json_mkobject());
+        _add(map, "vis", vis_changed ? vis_changed : json_mkobject());
         _add(c, "map", map);
     }
-    else
-        json_delete(changed);
     rec.last_place = place;
     rec.last_rows = rows;
+    rec.last_vis = vis;
 
     _add(c, "hash", hash);
     _write_event(c);
