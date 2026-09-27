@@ -233,8 +233,8 @@ static map<string, game_type> _game_modes()
         {"tutorial", GAME_TYPE_TUTORIAL},
         {"hints", GAME_TYPE_HINTS}
     };
-    if (Version::ReleaseType == VER_ALPHA)
-        modes["descent"] = GAME_TYPE_DESCENT;
+    // mycrawl: descent is enabled in all builds, not just alpha.
+    modes["descent"] = GAME_TYPE_DESCENT;
     return modes;
 }
 #endif
