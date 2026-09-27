@@ -462,7 +462,9 @@ static JsonNode *_terrain_json()
         if (feat == DNGN_UNSEEN)
             continue;
         string name;
-        if (feat_is_wall(feat))
+        // Walls one can see through (crystal, translucent) keep their
+        // names: what is seen beyond them can't be reached.
+        if (feat_is_wall(feat) && feat_is_opaque(feat))
             name = "wall";
         else if (feat == DNGN_FLOOR)
             name = "floor";
