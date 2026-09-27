@@ -20,6 +20,7 @@
 #include "describe.h"
 #include "english.h" // apostrophise
 #include "evoke.h"
+#include "gameio.h"
 #include "god-passive.h" // passive_t::bondage_skill_boost
 #include "hints.h"
 #include "options.h"
@@ -1924,6 +1925,15 @@ void skill_menu(int flag, int exp)
     {
         return;
     }
+
+    // For the live API: the menu draws itself, without text widgets.
+    const ui::Widget *skill_popup = popup.get();
+    gameio::context gameio_ctx("skill_menu", [skill_popup]() -> JsonNode * {
+        // Something (e.g. a skill's description) is shown over the menu.
+        if (ui::top_layout().get() != skill_popup)
+            return nullptr;
+        return gameio::precision_menu_json(skm);
+    });
 
     ui::run_layout(std::move(popup), done);
 

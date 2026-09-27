@@ -276,6 +276,7 @@ public:
     virtual MenuItem* get_active_item() = 0;
 
     virtual bool attach_item(MenuItem* item) = 0;
+    const vector<MenuItem*>& get_entries() const { return m_entries; }
 
 protected:
     enum Direction
@@ -447,6 +448,7 @@ public:
     virtual MenuItem* get_active_item();
     virtual void set_active_object(MenuObject* object);
     virtual void clear_selections();
+    const vector<MenuObject*>& get_objects() const { return m_attached_objects; }
 protected:
     // These correspond to the Arrow keys when used for browsing the menus
     enum Direction

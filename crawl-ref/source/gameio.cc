@@ -39,6 +39,7 @@
 #include "newgame-def.h"
 #include "options.h"
 #include "outer-menu.h"
+#include "precision-menu.h"
 #include "player.h"
 #include "prompt.h"
 #include "quiver.h"
@@ -554,15 +555,89 @@ static JsonNode *_spells_json()
     return a;
 }
 
+static const char *_training_name(skill_type sk)
+{
+    if (!you.can_currently_train[sk])
+        return "unavailable"; // e.g. hated by your god
+    switch (you.train[sk])
+    {
+    case TRAINING_ENABLED: return "on";
+    case TRAINING_FOCUSED: return "focus";
+    default:               return "off";
+    }
+}
+
+// What the skill menu (m) shows: the skills that one can have, whether
+// trainable now or not.
 static JsonNode *_skills_json()
 {
-    JsonNode *o = json_mkobject();
+    JsonNode *a = json_mkarray();
     for (skill_type sk = SK_FIRST_SKILL; sk < NUM_SKILLS; ++sk)
     {
+        if (is_invalid_skill(sk) || is_useless_skill(sk))
+            continue;
+        JsonNode *s = json_mkobject();
+        _add(s, "name", skill_name(sk));
         const int level = you.skill(sk, 10, true);
-        if (level > 0)
-            _add(o, skill_name(sk), level / 10.0);
+        _add(s, "level", level / 10.0);
+        // With bonuses and penalties (e.g. heroism, draining).
+        const int now = you.skill(sk, 10, false);
+        if (now != level)
+            _add(s, "level_now", now / 10.0);
+        _add(s, "apt", (double)species_apt(sk));
+        if (you.skills[sk] >= MAX_SKILL_LEVEL)
+            _add(s, "mastered", true);
+        else
+            _add(s, "train", _training_name(sk));
+        if (you.training[sk])
+            _add(s, "pct", (double)you.training[sk]);
+        if (const int target = you.get_training_target(sk))
+            _add(s, "target", target / 10.0);
+        if (you.skill_manual_points[sk])
+            _add(s, "manual", true);
+        json_append_element(a, s);
     }
+    return a;
+}
+
+JsonNode *precision_menu_json(const PrecisionMenu &menu)
+{
+    // Items by their place: rows top to bottom, left to right in a row.
+    map<pair<int, int>, string> cells;
+    for (const MenuObject *obj : menu.get_objects())
+    {
+        if (!obj->is_visible())
+            continue;
+        for (const MenuItem *item : obj->get_entries())
+        {
+            auto text_item = dynamic_cast<const TextItem *>(item);
+            if (!text_item || !item->is_visible())
+                continue;
+            string text = text_item->get_text();
+            if (dynamic_cast<const FormattedTextItem *>(item))
+                text = formatted_string::parse_string(text).tostring();
+            text = trimmed_string(replace_all(text, "\n", " "));
+            if (text.empty())
+                continue;
+            const coord_def &p = item->get_min_coord();
+            string &cell = cells[{ p.y, p.x }];
+            cell += cell.empty() ? text : " " + text;
+        }
+    }
+    vector<string> lines;
+    int y = INT_MIN;
+    for (const auto &cell : cells)
+    {
+        if (cell.first.first != y)
+        {
+            y = cell.first.first;
+            lines.push_back(cell.second);
+        }
+        else
+            lines.back() += "  " + cell.second;
+    }
+    JsonNode *o = json_mkobject();
+    _add(o, "lines", _strings(lines));
     return o;
 }
 

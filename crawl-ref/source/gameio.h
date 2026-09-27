@@ -37,6 +37,7 @@ using std::vector;
 
 class ghost_demon;
 class Menu;
+class PrecisionMenu;
 struct JsonNode;
 struct newgame_def;
 struct wm_event;
@@ -72,6 +73,9 @@ namespace gameio
         context(const char *name, std::function<JsonNode *()> detail);
         ~context();
     };
+    // The text of a PrecisionMenu (e.g. the skill menu, which draws itself
+    // and has no text widgets) as {"lines": [...]}, laid out as on screen.
+    JsonNode *precision_menu_json(const PrecisionMenu &menu);
 
     // Game lifecycle. game_starting() is called just before a new game is
     // set up, game_started() once it (or a loaded game) is ready to play.
