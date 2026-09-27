@@ -14,7 +14,13 @@
 #include <deque>
 #include <map>
 #include <thread>
+#ifdef TARGET_OS_WINDOWS
+# include <process.h>
+#else
+# include <unistd.h>
+#endif
 
+#include "ability.h"
 #include "areas.h"
 #include "branch.h"
 #include "cio.h"
@@ -116,6 +122,15 @@ static JsonNode *_strings(const vector<string> &v)
 static string _encode(JsonNode *node)
 {
     return JsonWrapper(node).to_string();
+}
+
+static int _pid()
+{
+#ifdef TARGET_OS_WINDOWS
+    return _getpid();
+#else
+    return getpid();
+#endif
 }
 
 static int64_t _epoch_ms()
@@ -590,6 +605,22 @@ static JsonNode *_spells_json()
     return a;
 }
 
+// The abilities (a), as their menu lists them.
+static JsonNode *_abilities_json()
+{
+    JsonNode *a = json_mkarray();
+    for (const talent &tal : your_talents(false))
+    {
+        JsonNode *o = json_mkobject();
+        _add(o, "letter", string(1, (char)tal.hotkey));
+        _add(o, "name", ability_name(tal.which));
+        _add(o, "cost", make_cost_description(tal.which));
+        _add(o, "fail", failure_rate_to_string(tal.fail));
+        json_append_element(a, o);
+    }
+    return a;
+}
+
 static const char *_training_name(skill_type sk)
 {
     if (!you.can_currently_train[sk])
@@ -1009,6 +1040,8 @@ static bool _write_state()
     if (!live.keys_done.empty())
         _add(st, "keys_done", live.keys_done);
     _add(st, "w", (double)_epoch_ms());
+    // Which crawl wrote it (e.g. to find its window).
+    _add(st, "pid", (double)_pid());
     _add(st, "game", crawl_state.game_started);
     _add_context(st);
 
@@ -1027,6 +1060,7 @@ static bool _write_state()
         _add(st, "inv", _inventory_json());
         _add(st, "spells", _spells_json());
         _add(st, "skills", _skills_json());
+        _add(st, "abilities", _abilities_json());
         _add(st, "map", _map_json(_map_rows(), _vis_rows()));
     }
 
