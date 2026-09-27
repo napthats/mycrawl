@@ -1548,6 +1548,16 @@ void game_options::reset_paths()
     }
 #endif
 
+#if !defined(DGAMELAUNCH) && !defined(SAVE_DIR_PATH)
+    // mycrawl: keep macro.txt with the saves, in the save generation
+    // directory (see get_system_environment()).
+    if (SysEnv.macro_dir.empty() && !SysEnv.crawl_dir.empty())
+    {
+        macro_dir_option = "";
+        macro_dir = _get_save_path("");
+    }
+#endif
+
 #if defined(TARGET_OS_MACOSX)
     if (SysEnv.macro_dir.empty())
     {
