@@ -524,7 +524,10 @@ static JsonNode *_inventory_json()
         if (!item.defined())
             continue;
         JsonNode *it = json_mkobject();
-        _add(it, "slot", string(1, index_to_letter(i)));
+        // The letter shown in the inventory: consumables have letters of
+        // their own, apart from the index into you.inv.
+        _add(it, "slot", string(1, (char)item.slot));
+        _add(it, "type", base_type_string(item));
         _add(it, "name", item.name(DESC_INVENTORY_EQUIP));
         _add(it, "q", (double)item.quantity);
         _add(it, "equipped", item_is_equipped(item));
