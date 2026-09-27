@@ -1286,6 +1286,11 @@ void after_options_read()
     Options.shared_dir = Options.save_dir; // scores, logfile, bones
     Options.morgue_dir = catpath(rp.root, "morgue/");
     Options.gameio_record = false;
+    // The record starts with the game, so it has no key for the "press any
+    // key" of the title screen, and keys pressed now control the replay.
+#ifdef USE_TILE
+    Options.tile_skip_title = true;
+#endif
     // Saving in the recorded game saved and loaded it again: so does the
     // replay.
     Options.restart_after_game = true;
