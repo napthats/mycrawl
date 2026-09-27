@@ -857,6 +857,19 @@ static void _add_context(JsonNode *st)
         else
             name = "key"; // a prompt in the message area; see the messages
     }
+    // A y/n question without a prompt of its own (e.g. buying in a shop) is
+    // asked in the "more" line of the menu it comes from.
+    if (name == "yesno" && text.empty())
+    {
+        for (auto it = contexts.rbegin(); it != contexts.rend(); ++it)
+        {
+            if (!it->menu)
+                continue;
+            const string more = it->menu->get_more().tostring();
+            text = trimmed_string(more.substr(0, more.find('\n')));
+            break;
+        }
+    }
     _add(st, "context", name);
     if (!text.empty())
         _add(st, "prompt", text);
