@@ -9,6 +9,7 @@
 
 #include <queue>
 
+#include "gameio.h"
 #include "libutil.h"
 #include "macro.h"
 #include "message.h"
@@ -353,6 +354,7 @@ int cancellable_get_line(char *buf, int len, input_history *mh,
                         const string &tag)
 {
     UNUSED(tag);
+    gameio::context gameio_ctx("line");
 
     flush_prev_message();
 

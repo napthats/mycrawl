@@ -30,6 +30,7 @@
 #include "english.h"
 #include "externs.h" // INVALID_COORD
 #include "fight.h" // melee_confuse_chance
+#include "gameio.h"
 #include "god-abil.h"
 #include "hints.h"
 #include "invent.h"
@@ -2666,6 +2667,7 @@ bool direction_chooser::noninteractive()
 
 bool direction_chooser::choose_direction()
 {
+    gameio::context gameio_ctx("target");
 #ifdef USE_TILE
     ui::cutoff_point ui_cutoff_point;
 #endif

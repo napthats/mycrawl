@@ -685,6 +685,8 @@ public:
         if (_pre_more())
             return;
 
+        gameio::context gameio_ctx("more");
+
         if (you.running)
         {
             mouse_control mc(MOUSE_MODE_MORE);
@@ -1645,6 +1647,7 @@ void msgwin_got_input()
 int msgwin_get_line(string prompt, char *buf, int len,
                     input_history *mh, const string &fill)
 {
+    gameio::context gameio_ctx("line", prompt);
     bool use_popup = !crawl_state.need_save || ui::has_layout();
 
     int ret;

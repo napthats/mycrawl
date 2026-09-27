@@ -9,6 +9,7 @@
 
 #include <cinttypes>
 #include <climits>
+#include <deque>
 
 #include "branch.h"
 #include "coordit.h"
@@ -22,6 +23,8 @@
 #include "json.h"
 #include "json-wrapper.h"
 #include "libutil.h"
+#include "macro.h"
+#include "menu.h"
 #include "message.h"
 #include "mon-info.h"
 #include "mon-util.h"
@@ -40,6 +43,7 @@
 #include "stringutil.h"
 #include "syscalls.h"
 #include "tags.h"
+#include "ui.h"
 #include "version.h"
 #include "viewchar.h"
 #ifdef USE_TILE_LOCAL
@@ -382,6 +386,279 @@ static string _state_hash(const vector<string> &rows)
     return make_stringf("%016" PRIx64, h);
 }
 
+// The known part of the level: rows from y0, each starting at x0.
+static JsonNode *_map_json(const vector<string> &rows)
+{
+    int y0 = -1, y1 = -1;
+    size_t x0 = SIZE_MAX;
+    for (int y = 0; y < (int)rows.size(); ++y)
+    {
+        const size_t first = rows[y].find_first_not_of(' ');
+        if (first == string::npos)
+            continue;
+        if (y0 < 0)
+            y0 = y;
+        y1 = y;
+        x0 = min(x0, first);
+    }
+    JsonNode *m = json_mkobject();
+    if (y0 < 0)
+        x0 = y0 = 0;
+    _add(m, "x0", (double)x0);
+    _add(m, "y0", (double)y0);
+    JsonNode *a = json_mkarray();
+    // Every non-empty row starts with at least x0 spaces, so cutting x0
+    // bytes is cutting x0 characters even with multi-byte glyphs.
+    for (int y = y0; y <= y1; ++y)
+        json_append_element(a, json_mkstring(rows[y].substr(min(x0, rows[y].size()))));
+    _add(m, "rows", a);
+    return m;
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// Contexts: what kind of input the game is waiting for.
+
+struct context_entry
+{
+    string name;
+    string text;
+    const Menu *menu;
+};
+
+static vector<context_entry> contexts;
+
+context::context(const char *name, const string &text)
+{
+    // A nested context of the same kind (msgwin_get_line() and the
+    // cancellable_get_line() it calls) keeps the outer prompt.
+    string t = text;
+    if (t.empty() && !contexts.empty() && contexts.back().name == name)
+        t = contexts.back().text;
+    contexts.push_back({ name, t, nullptr });
+}
+
+context::context(const Menu *menu)
+{
+    contexts.push_back({ "menu", "", menu });
+}
+
+context::~context()
+{
+    contexts.pop_back();
+}
+
+// Text of the widgets in the topmost UI layout (popups, menus, the main
+// menu).
+static void _collect_text(ui::Widget *w, vector<string> &out)
+{
+    if (!w || !w->is_visible())
+        return;
+    if (auto text = dynamic_cast<ui::Text *>(w))
+    {
+        const string s = trimmed_string(text->get_text().tostring());
+        if (!s.empty())
+            out.push_back(s);
+        return;
+    }
+    if (auto sw = dynamic_cast<ui::Switcher *>(w))
+    {
+        if (sw->num_children() > 0)
+            _collect_text(sw->current_widget().get(), out);
+        return;
+    }
+    w->for_each_child([&out](shared_ptr<ui::Widget> &child) {
+        _collect_text(child.get(), out);
+    });
+}
+
+static void _add_context(JsonNode *st)
+{
+    string name;
+    string text;
+    const Menu *menu = nullptr;
+    if (!contexts.empty())
+    {
+        name = contexts.back().name;
+        text = contexts.back().text;
+        menu = contexts.back().menu;
+        // Something (e.g. an item description) is shown over the menu.
+        if (menu && !menu->gameio_on_top())
+        {
+            name = "popup";
+            menu = nullptr;
+        }
+    }
+    if (name.empty())
+    {
+        if (crawl_state.game_started && crawl_state.waiting_for_command)
+            name = "command";
+        else if (ui::has_layout())
+            name = "popup";
+        else if (!crawl_state.game_started)
+            name = "startup";
+        else
+            name = "key"; // a prompt in the message area; see the messages
+    }
+    _add(st, "context", name);
+    if (!text.empty())
+        _add(st, "prompt", text);
+    if (menu)
+        _add(st, "menu", menu->gameio_json());
+    if (ui::has_layout())
+    {
+        vector<string> screen;
+        _collect_text(ui::top_layout().get(), screen);
+        _add(st, "screen", _strings(screen));
+    }
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// Live API
+
+static const int LIVE_POLL_MS = 30;
+static const size_t LIVE_MESSAGES = 50;
+
+struct message_entry
+{
+    int n;
+    int turn;
+    string channel;
+    string text;
+};
+
+struct live_state
+{
+    bool forced = false;
+    bool dir_ready = false;
+    string dir;
+    deque<int> keys;
+    // The state changed since state.json was last written.
+    bool dirty = true;
+    int seq = 0;
+    int inputs = 0;
+    deque<message_entry> messages;
+};
+
+static live_state live;
+static int msg_seq = 0;
+
+void force_live()
+{
+    live.forced = true;
+}
+
+static bool _live_enabled()
+{
+    return live.forced || Options.gameio_live;
+}
+
+static JsonNode *_message_json(const message_entry &msg, bool typed = true)
+{
+    JsonNode *m = json_mkobject();
+    if (typed)
+        _add(m, "t", "msg");
+    _add(m, "n", (double)msg.n);
+    _add(m, "turn", (double)msg.turn);
+    _add(m, "ch", msg.channel);
+    _add(m, "text", msg.text);
+    return m;
+}
+
+static bool _prepare_live_dir()
+{
+    if (live.dir_ready)
+        return true;
+    string dir = catpath(SysEnv.crawl_dir, "live");
+    string inbox = catpath(dir, "inbox");
+    if (!check_mkdir("Live API directory", &dir, true)
+        || !check_mkdir("Live API inbox", &inbox, true))
+    {
+        return false;
+    }
+    // Keys left over from an earlier run are stale.
+    for (const string &name : get_dir_files_sorted(inbox))
+        unlink_u(catpath(inbox, name).c_str());
+    live.dir = dir;
+    live.dir_ready = true;
+    return true;
+}
+
+// Queues the keys of *.keys files in the inbox, oldest name first. Writers
+// should write another name and rename it, so that no file is read half
+// written.
+static void _poll_inbox()
+{
+    const string inbox = catpath(live.dir, "inbox");
+    for (const string &name : get_dir_files_sorted(inbox))
+    {
+        if (!ends_with(name, ".keys"))
+            continue;
+        const string path = catpath(inbox, name);
+        FILE *f = fopen_u(path.c_str(), "rb");
+        if (!f)
+            continue;
+        string content;
+        char buf[1024];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+            content.append(buf, n);
+        fclose(f);
+        // Only use keys that won't be read again.
+        if (unlink_u(path.c_str()) != 0)
+            continue;
+        while (!content.empty()
+               && (content.back() == '\n' || content.back() == '\r'))
+        {
+            content.pop_back();
+        }
+        for (int key : parse_keyseq(content))
+            live.keys.push_back(key);
+    }
+}
+
+static bool _write_state()
+{
+    rng::generator ui_rng(rng::UI);
+
+    JsonNode *st = json_mkobject();
+    _add(st, "seq", (double)++live.seq);
+    _add(st, "inputs", (double)live.inputs);
+    _add(st, "w", (double)_epoch_ms());
+    _add(st, "game", crawl_state.game_started);
+    _add_context(st);
+
+    JsonNode *msgs = json_mkarray();
+    for (const message_entry &msg : live.messages)
+        json_append_element(msgs, _message_json(msg, false));
+    _add(st, "messages", msgs);
+
+    if (crawl_state.game_started)
+    {
+        _add(st, "you", _player_json());
+        _add(st, "mons", _monsters_json());
+        _add(st, "items", _floor_items_json(true));
+        _add(st, "inv", _inventory_json());
+        _add(st, "spells", _spells_json());
+        _add(st, "skills", _skills_json());
+        _add(st, "map", _map_json(_map_rows()));
+    }
+
+    char *s = json_stringify(st, " ");
+    json_delete(st);
+
+    const string path = catpath(live.dir, "state.json");
+    const string tmp = path + ".tmp";
+    bool ok = false;
+    if (FILE *f = fopen_u(tmp.c_str(), "wb"))
+    {
+        ok = fputs(s, f) >= 0;
+        ok = fclose(f) == 0 && ok;
+    }
+    free(s);
+    // Fails while someone has state.json open; the caller tries again.
+    return ok && rename_u(tmp.c_str(), path.c_str()) == 0;
+}
+
 /////////////////////////////////////////////////////////////////////////////
 // Play records
 
@@ -398,7 +675,6 @@ struct record_state
     vector<string> pending_events;
 
     int cmd_seq = 0;
-    int msg_seq = 0;
 
     // For the diffs in the command snapshots.
     string last_place;
@@ -621,15 +897,17 @@ void game_ended(game_exit exit, const string &message)
 
 void on_message(int channel, const string &text)
 {
-    if (!_recording())
-        return;
-    JsonNode *m = json_mkobject();
-    _add(m, "t", "msg");
-    _add(m, "n", (double)++rec.msg_seq);
-    _add(m, "turn", (double)you.num_turns);
-    _add(m, "ch", channel_to_str(channel));
-    _add(m, "text", text);
-    _write_event(m);
+    const message_entry msg = { ++msg_seq, you.num_turns,
+                                channel_to_str(channel), text };
+    if (_live_enabled())
+    {
+        live.messages.push_back(msg);
+        if (live.messages.size() > LIVE_MESSAGES)
+            live.messages.pop_front();
+        live.dirty = true;
+    }
+    if (_recording())
+        _write_event(_message_json(msg));
 }
 
 void on_note(int turn, const string &place, const string &text)
@@ -772,6 +1050,17 @@ static void _record_input(const wm_event &ev, bool blocking)
     rec.kb_first = -1;
 }
 
+static void _consumed(const wm_event &ev, bool blocking)
+{
+    _record_input(ev, blocking);
+    if (ev.type == WME_KEYDOWN || ev.type == WME_MOUSEBUTTONDOWN
+        || ev.type == WME_MOUSEBUTTONUP || ev.type == WME_MOUSEWHEEL)
+    {
+        ++live.inputs;
+        live.dirty = true;
+    }
+}
+
 int wait_event(wm_event *event, int timeout,
                const function<int(wm_event *, int)> &raw_wait)
 {
@@ -780,10 +1069,40 @@ int wait_event(wm_event *event, int timeout,
     if (blocking)
         _flush_records();
 
-    const int got = raw_wait(event, timeout);
-    if (got)
-        _record_input(*event, blocking);
-    return got;
+    // Live keys are only given to a real wait for input, not to the short
+    // waits of animations, which is also what typing ahead does.
+    if (!blocking || !_live_enabled() || !_prepare_live_dir())
+    {
+        const int got = raw_wait(event, timeout);
+        if (got)
+            _consumed(*event, blocking);
+        return got;
+    }
+
+    while (true)
+    {
+        _poll_inbox();
+        if (!live.keys.empty())
+        {
+            *event = wm_event();
+            event->type = WME_KEYDOWN;
+            event->key.keysym.sym = live.keys.front();
+            live.keys.pop_front();
+            _consumed(*event, blocking);
+            return 1;
+        }
+
+        // Idle: tell the other side what we're waiting for.
+        if (live.dirty && _write_state())
+            live.dirty = false;
+
+        const int got = raw_wait(event, LIVE_POLL_MS);
+        if (got)
+        {
+            _consumed(*event, blocking);
+            return got;
+        }
+    }
 }
 
 // Replaying has to know when a key interrupted something (e.g. travel), so

@@ -86,6 +86,7 @@ struct menu_letter2
 };
 
 struct item_def;
+struct JsonNode;
 class Menu;
 
 int menu_colour(const string &itemtext,
@@ -398,6 +399,10 @@ public:
     void webtiles_scroll(int first, int hover);
     void webtiles_handle_item_request(int start, int end);
 #endif
+
+    // mycrawl: the menu as shown, for the gameio live API.
+    JsonNode *gameio_json() const;
+    bool gameio_on_top() const;
 protected:
     string _title_prompt_help_tag;
 

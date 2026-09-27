@@ -15,9 +15,11 @@
 #include "command.h"
 #include "coord.h"
 #include "env.h"
+#include "gameio.h"
 #include "tile-env.h"
 #include "hints.h"
 #include "invent.h"
+#include "json.h"
 #include "libutil.h"
 #include "macro.h"
 #include "message.h"
@@ -1535,6 +1537,7 @@ vector<MenuEntry *> Menu::show(bool reuse_selections)
 
 void Menu::do_menu()
 {
+    gameio::context gameio_ctx(this);
     bool done = false;
     m_ui.popup = make_shared<UIMenuPopup>(m_ui.vbox, this);
 
@@ -3715,4 +3718,45 @@ int ToggleableMenu::pre_process(int key)
         return 0;
     }
     return key;
+}
+
+JsonNode *Menu::gameio_json() const
+{
+    JsonNode *m = json_mkobject();
+    if (title)
+        json_append_member(m, "title", json_mkstring(
+            formatted_string::parse_string(title->get_text()).tostring()));
+    json_append_member(m, "multiselect", json_mkbool(is_set(MF_MULTISELECT)));
+    JsonNode *entries = json_mkarray();
+    for (const MenuEntry *me : items)
+    {
+        JsonNode *e = json_mkobject();
+        json_append_member(e, "text", json_mkstring(
+            formatted_string::parse_string(me->get_text()).tostring()));
+        if (me->level != MEL_ITEM)
+        {
+            json_append_member(e, "level", json_mkstring(
+                me->level == MEL_TITLE ? "title" : "subtitle"));
+        }
+        if (!me->hotkeys.empty())
+        {
+            const int key = me->hotkeys[0];
+            json_append_member(e, "hotkey", json_mkstring(
+                keycode_is_printable(key) ? string(1, (char)key)
+                                          : keycode_to_name(key, false)));
+        }
+        if (me->selected())
+            json_append_member(e, "selected", json_mkbool(true));
+        json_append_element(entries, e);
+    }
+    json_append_member(m, "items", entries);
+    const string more_text = more.tostring();
+    if (!more_text.empty())
+        json_append_member(m, "more", json_mkstring(more_text));
+    return m;
+}
+
+bool Menu::gameio_on_top() const
+{
+    return m_ui.popup && ui::top_layout() == m_ui.popup;
 }

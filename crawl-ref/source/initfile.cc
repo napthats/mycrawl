@@ -42,6 +42,7 @@
 #include "explore-stop-options.h"
 #include "files.h"
 #include "game-options.h"
+#include "gameio.h"
 #include "ghost.h"
 #include "invent.h"
 #include "item-prop.h"
@@ -581,6 +582,7 @@ const vector<GameOption*> game_options::build_options_list()
         new BoolGameOption(SIMPLE_NAME(travel_one_unsafe_move), false),
         new BoolGameOption(SIMPLE_NAME(dump_on_save), true),
         new BoolGameOption(SIMPLE_NAME(gameio_record), false),
+        new BoolGameOption(SIMPLE_NAME(gameio_live), false),
         new BoolGameOption(SIMPLE_NAME(rest_wait_both), false),
         new BoolGameOption(SIMPLE_NAME(rest_wait_ancestor), false),
         new BoolGameOption(SIMPLE_NAME(cloud_status), !is_tiles()),
@@ -4843,6 +4845,7 @@ enum commandline_option_type
     CLO_PRINT_WEBTILES_OPTIONS,
 #endif
     CLO_RESET_CACHE,
+    CLO_LIVE,
 
     CLO_NOPS
 };
@@ -4894,7 +4897,7 @@ static const char *cmd_ops[] =
 #ifdef USE_TILE_WEB
     "webtiles-socket", "await-connection", "print-webtiles-options",
 #endif
-    "reset-cache",
+    "reset-cache", "live",
 };
 
 
@@ -6002,6 +6005,10 @@ bool parse_args(int argc, char **argv, bool rc_only)
             if (next_is_param)
                 return false;
             crawl_state.use_des_cache = false;
+            break;
+
+        case CLO_LIVE:
+            gameio::force_live();
             break;
 
         case CLO_GDB:

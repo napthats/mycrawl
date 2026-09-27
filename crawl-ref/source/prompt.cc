@@ -11,6 +11,7 @@
 
 #include "clua.h"
 #include "delay.h"
+#include "gameio.h"
 #include "libutil.h"
 #include "macro.h"
 #include "menu.h"
@@ -131,6 +132,7 @@ int yesno(const char *str, bool allow_lowercase, int default_answer, bool clear_
            bool interrupt_delays, bool noprompt,
            const explicit_keymap *map, bool allow_popup, bool ask_always)
 {
+    gameio::context gameio_ctx("yesno", str);
     if (interrupt_delays && !crawl_state.is_repeating_cmd())
         interrupt_activity(activity_interrupt::force);
 
