@@ -7,13 +7,18 @@
 
 #include "gameio.h"
 
+#include <algorithm>
+#include <array>
 #include <cinttypes>
 #include <climits>
 #include <deque>
+#include <map>
 
 #include "branch.h"
 #include "cio.h"
+#include "cloud.h"
 #include "coordit.h"
+#include "directn.h"
 #include "env.h"
 #include "files.h"
 #include "ghost.h"
@@ -44,6 +49,7 @@
 #include "stringutil.h"
 #include "syscalls.h"
 #include "tags.h"
+#include "terrain.h"
 #include "ui.h"
 #include "version.h"
 #include "viewchar.h"
@@ -342,6 +348,142 @@ static JsonNode *_floor_items_json(bool all_known)
         json_append_element(a, it);
     }
     return a;
+}
+
+// Cells grouped by name, as runs: {"name": ..., <extra>, "runs": [[y, x1,
+// x2], ...]} in the order the names were first seen.
+class cell_runs
+{
+public:
+    void add(const string &name, const coord_def &p, const string &glyph = "")
+    {
+        auto it = m_index.find(name);
+        if (it == m_index.end())
+        {
+            it = m_index.emplace(name, m_groups.size()).first;
+            m_groups.push_back({ name, glyph, {} });
+        }
+        vector<array<int, 3>> &runs = m_groups[it->second].runs;
+        if (!runs.empty() && runs.back()[0] == p.y && runs.back()[2] == p.x - 1)
+            runs.back()[2] = p.x;
+        else
+            runs.push_back({ p.y, p.x, p.x });
+    }
+
+    JsonNode *json() const
+    {
+        JsonNode *a = json_mkarray();
+        for (const group &g : m_groups)
+        {
+            JsonNode *o = json_mkobject();
+            _add(o, "name", g.name);
+            if (!g.glyph.empty())
+                _add(o, "glyph", g.glyph);
+            JsonNode *runs = json_mkarray();
+            for (const array<int, 3> &r : g.runs)
+            {
+                JsonNode *run = json_mkarray();
+                for (int v : r)
+                    json_append_element(run, json_mknumber(v));
+                json_append_element(runs, run);
+            }
+            _add(o, "runs", runs);
+            json_append_element(a, o);
+        }
+        return a;
+    }
+
+private:
+    struct group
+    {
+        string name;
+        string glyph;
+        vector<array<int, 3>> runs;
+    };
+    map<string, size_t> m_index;
+    vector<group> m_groups;
+};
+
+// The terrain of the level as the player knows it, named as the look
+// command names it. Map glyphs don't tell everything: some features share a
+// glyph (told apart by colour on screen: branch entrances and stairs, lava
+// and deep water, altars of different gods, trap types), and items and
+// monsters hide what they stand on. So:
+//   legend: for each terrain glyph, the name most cells with it have;
+//   cells: the cells that aren't what the legend says (and non-floor
+//          terrain hidden under something), grouped by name.
+static JsonNode *_terrain_json()
+{
+    struct cell_info
+    {
+        coord_def pos;
+        string glyph;
+        string name;
+        bool covered;
+    };
+    vector<cell_info> cells;
+    map<string, map<string, int>> counts; // glyph -> name -> cells
+    for (rectangle_iterator ri(0); ri; ++ri)
+    {
+        const map_cell &mc = env.map_knowledge(*ri);
+        if (!mc.known())
+            continue;
+        const dungeon_feature_type feat = mc.feat();
+        if (feat == DNGN_UNSEEN)
+            continue;
+        string name;
+        if (feat_is_wall(feat))
+            name = "wall";
+        else if (feat == DNGN_FLOOR)
+            name = "floor";
+        else
+            name = feature_description_at(*ri, false, DESC_PLAIN);
+        const string glyph = stringize_glyph(get_feat_symbol(feat));
+        const bool covered = *ri == you.pos()
+                             || get_cell_glyph(*ri).ch != get_feat_symbol(feat);
+        cells.push_back({ *ri, glyph, name, covered });
+        ++counts[glyph][name];
+    }
+
+    JsonNode *legend = json_mkobject();
+    map<string, string> common;
+    for (const auto &entry : counts)
+    {
+        const auto best = max_element(entry.second.begin(), entry.second.end(),
+            [](const pair<const string, int> &a, const pair<const string, int> &b)
+            { return a.second < b.second; });
+        common[entry.first] = best->first;
+        _add(legend, entry.first.c_str(), best->first);
+    }
+
+    cell_runs runs;
+    for (const cell_info &c : cells)
+    {
+        if (c.name != common[c.glyph] || c.covered && c.name != "floor")
+            runs.add(c.name, c.pos, c.glyph);
+    }
+
+    JsonNode *t = json_mkobject();
+    _add(t, "legend", legend);
+    _add(t, "cells", runs.json());
+    return t;
+}
+
+// Clouds shown on the map, remembered ones marked as such.
+static JsonNode *_clouds_json()
+{
+    cell_runs runs;
+    for (rectangle_iterator ri(0); ri; ++ri)
+    {
+        const cloud_info *cloud = env.map_knowledge(*ri).cloudinfo();
+        if (!cloud || cloud->type == CLOUD_NONE)
+            continue;
+        string name = cloud_type_name(cloud->type, false);
+        if (!you.see_cell(*ri))
+            name += " (remembered)";
+        runs.add(name, *ri);
+    }
+    return runs.json();
 }
 
 static JsonNode *_inventory_json()
@@ -677,6 +819,8 @@ static bool _write_state()
         _add(st, "you", _player_json());
         _add(st, "mons", _monsters_json());
         _add(st, "items", _floor_items_json(true));
+        _add(st, "terrain", _terrain_json());
+        _add(st, "clouds", _clouds_json());
         _add(st, "inv", _inventory_json());
         _add(st, "spells", _spells_json());
         _add(st, "skills", _skills_json());
@@ -1323,7 +1467,7 @@ struct record_state
     string last_place;
     vector<string> last_rows;
     vector<string> last_vis;
-    string last_inv, last_spells, last_skills;
+    string last_inv, last_spells, last_skills, last_terrain, last_clouds;
 
     // key_interrupt() calls since the last recorded input, and the call at
     // which a key was first seen waiting.
@@ -1653,6 +1797,8 @@ void on_command_wait()
     _add_if_changed(c, "inv", _inventory_json(), rec.last_inv);
     _add_if_changed(c, "spells", _spells_json(), rec.last_spells);
     _add_if_changed(c, "skills", _skills_json(), rec.last_skills);
+    _add_if_changed(c, "terrain", _terrain_json(), rec.last_terrain);
+    _add_if_changed(c, "clouds", _clouds_json(), rec.last_clouds);
 
     // Map (and visibility) rows that changed ("" for a row that was
     // cleared); all non-empty rows on arriving at a level.
