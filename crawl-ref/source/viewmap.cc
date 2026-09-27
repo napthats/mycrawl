@@ -19,6 +19,7 @@
 #include "env.h"
 #include "files.h"
 #include "format.h"
+#include "gameio.h"
 #include "fprop.h"
 #include "libutil.h"
 #include "macro.h"
@@ -941,6 +942,13 @@ bool show_map(level_pos &lpos, bool travel_mode, bool allow_offlevel)
         cursor_control cc(!Options.use_fake_cursor);
 #endif
 
+        // For the live API: the map draws itself, without text widgets.
+        gameio::context gameio_ctx("level_map", [travel_mode]() -> JsonNode * {
+            // Something (e.g. a description) is shown over the map.
+            if (!map_view || ui::top_layout() != map_view)
+                return nullptr;
+            return gameio::level_map_json(map_view->lpos(), travel_mode);
+        });
         ui::push_layout(map_view, KMC_LEVELMAP);
         while (map_view->is_alive() && !crawl_state.seen_hups)
             ui::pump_events();

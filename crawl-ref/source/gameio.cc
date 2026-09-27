@@ -666,6 +666,18 @@ static JsonNode *_skills_json()
     return a;
 }
 
+JsonNode *level_map_json(const level_pos &cursor, bool travel_mode)
+{
+    JsonNode *o = json_mkobject();
+    _add(o, "place", cursor.id.describe());
+    _add(o, "pos", _pos(cursor.pos));
+    if (cursor.id == level_id::current())
+        _add(o, "rel", _pos(cursor.pos - you.pos()));
+    // Choosing a place (. or Enter) travels there.
+    _add(o, "travel", travel_mode);
+    return o;
+}
+
 JsonNode *precision_menu_json(const PrecisionMenu &menu)
 {
     // Items by their place: rows top to bottom, left to right in a row.

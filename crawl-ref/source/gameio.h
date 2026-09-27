@@ -39,6 +39,7 @@ class ghost_demon;
 class Menu;
 class PrecisionMenu;
 struct JsonNode;
+struct level_pos;
 struct newgame_def;
 struct wm_event;
 
@@ -76,6 +77,9 @@ namespace gameio
     // The text of a PrecisionMenu (e.g. the skill menu, which draws itself
     // and has no text widgets) as {"lines": [...]}, laid out as on screen.
     JsonNode *precision_menu_json(const PrecisionMenu &menu);
+    // The cursor of the level map (X, or travel from a search), which
+    // draws itself too.
+    JsonNode *level_map_json(const level_pos &cursor, bool travel_mode);
 
     // Game lifecycle. game_starting() is called just before a new game is
     // set up, game_started() once it (or a loaded game) is ready to play.
