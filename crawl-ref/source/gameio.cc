@@ -935,6 +935,8 @@ static void _add_context(JsonNode *st)
 // Live API
 
 static const int LIVE_POLL_MS = 30;
+// How often to try for the live directory while another crawl has it.
+static const int LIVE_RETRY_MS = 500;
 static const size_t LIVE_MESSAGES = 50;
 
 struct message_entry
@@ -995,6 +997,18 @@ static bool _prepare_live_dir()
     if (!check_mkdir("Live API directory", &dir, true)
         || !check_mkdir("Live API inbox", &inbox, true))
     {
+        return false;
+    }
+    // One crawl per live directory: two would take each other's keys and
+    // overwrite each other's state.json. Another crawl without the lock
+    // tries again at its next wait for input, so it takes over once the
+    // first one exits. The lock goes with the process.
+    FILE *lock = fopen_u(catpath(dir, "lock").c_str(), "a");
+    if (!lock)
+        return false;
+    if (!lock_file(fileno(lock), true, false))
+    {
+        fclose(lock);
         return false;
     }
     // Keys left over from an earlier run are stale.
@@ -1108,6 +1122,7 @@ void on_exit(int exit_code, const string &message)
     _add(st, "inputs", (double)live.inputs);
     _add(st, "w", (double)_epoch_ms());
     _add(st, "game", false);
+    _add(st, "pid", (double)_pid());
     _add(st, "context", "exited");
     _add(st, "exited", true);
     _add(st, "exit_code", (double)exit_code);
@@ -2373,7 +2388,7 @@ int wait_event(wm_event *event, int timeout,
 
     // Live keys are only given to a real wait for input, not to the short
     // waits of animations, which is also what typing ahead does.
-    if (!blocking || !_live_enabled() || !_prepare_live_dir())
+    if (!blocking || !_live_enabled())
     {
         const int got = raw_wait(event, timeout);
         if (got)
@@ -2383,6 +2398,18 @@ int wait_event(wm_event *event, int timeout,
 
     while (true)
     {
+        // Another crawl may have the live directory: try again now and then.
+        if (!_prepare_live_dir())
+        {
+            const int got = raw_wait(event, LIVE_RETRY_MS);
+            if (got)
+            {
+                _consumed(*event, blocking);
+                return got;
+            }
+            continue;
+        }
+
         _poll_inbox();
         if (!live.keys.empty())
         {
