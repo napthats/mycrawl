@@ -13,6 +13,7 @@
 #include "colour.h"
 #include "delay.h"
 #include "english.h"
+#include "gameio.h"
 #include "hints.h"
 #include "initfile.h"
 #include "libutil.h"
@@ -1587,6 +1588,7 @@ static void _mpr(string text, msg_channel_type channel, int param, bool nojoin,
 
     message_line msg = message_line(text, channel, param, join);
     buffer.add(msg);
+    gameio::on_message(channel, fs.tostring());
 
     if (!crawl_state.io_inited)
         return;

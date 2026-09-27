@@ -14,6 +14,7 @@
 #include "cio.h"
 #include "defines.h"
 #include "env.h"
+#include "gameio.h"
 #include "message.h"
 #include "state.h"
 #include "terrain.h"
@@ -234,7 +235,7 @@ bool kbhit()
     if (crawl_state.tiles_disabled || crawl_state.seen_hups)
         return false;
     // Look for the presence of any keyboard events in the queue.
-    return wm->next_event_is(WME_KEYDOWN);
+    return gameio::filter_kbhit(wm->next_event_is(WME_KEYDOWN));
 }
 
 void console_startup()

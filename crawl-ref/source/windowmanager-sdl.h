@@ -66,6 +66,7 @@ protected:
     // Helper functions
     SDL_Surface *load_image(const char *file) const;
     int send_textinput(wm_event *event);
+    int wait_sdl_event(wm_event *event, int timeout);
 
     SDL_Window *m_window;
     SDL_GLContext m_context;

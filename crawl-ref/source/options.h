@@ -757,6 +757,7 @@ public:
     bool        single_column_item_menus;
 
     bool        dump_on_save;       // Automatically dump character when saving.
+    bool        gameio_record;      // Write play records (gameio.h).
     kill_dump_options dump_kill_places;   // How to dump place information for kills.
     int         dump_message_count; // How many old messages to dump
 

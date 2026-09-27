@@ -71,6 +71,7 @@ fineff.o \
 format.o \
 fprop.o \
 game-options.o \
+gameio.o \
 geom2d.o \
 ghost.o \
 god-abil.o \

@@ -20,6 +20,7 @@
 #include "end.h"
 #include "exclude.h"
 #include "files.h"
+#include "gameio.h"
 #include "god-abil.h"
 #include "god-passive.h"
 #include "hints.h"
@@ -1102,6 +1103,7 @@ bool startup_step()
     else
     {
         clear_message_store();
+        gameio::game_starting();
         setup_game(ng);
         newchar = true;
         choice.seed = Options.seed; // kind of ugly, but may be changed during
@@ -1112,6 +1114,7 @@ bool startup_step()
         crawl_state.default_startup_name = you.your_name;
 
     _post_init(newchar);
+    gameio::game_started(newchar, newchar ? &ng : nullptr);
 
     return newchar;
 }

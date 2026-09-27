@@ -53,6 +53,7 @@
 #include "errors.h"
 #include "player-save-info.h"
 #include "fineff.h"
+#include "gameio.h"
 #include "ghost.h"
 #include "god-abil.h"
 #include "god-companions.h"
@@ -3053,6 +3054,15 @@ static vector<ghost_demon> _load_permastore_ghosts(bool backup_on_upgrade=false)
     return _load_ghosts_core(_bones_permastore_file(), backup_on_upgrade);
 }
 
+// The ghosts that level generation sees. mycrawl: recorded, for replays.
+static vector<ghost_demon> _levelgen_ghosts(bool permastore)
+{
+    vector<ghost_demon> ghosts = permastore ? _load_permastore_ghosts()
+                                            : _load_ephemeral_ghosts();
+    gameio::record_ghosts(permastore ? "perm" : "eph", ghosts);
+    return ghosts;
+}
+
 /**
  * Attempt to fill in a monster based on bones files.
  *
@@ -3066,10 +3076,10 @@ bool define_ghost_from_bones(monster& mons)
 
     bool used_permastore = false;
 
-    vector<ghost_demon> loaded_ghosts = _load_ephemeral_ghosts();
+    vector<ghost_demon> loaded_ghosts = _levelgen_ghosts(false);
     if (loaded_ghosts.empty())
     {
-        loaded_ghosts = _load_permastore_ghosts();
+        loaded_ghosts = _levelgen_ghosts(true);
         if (loaded_ghosts.empty())
             return false;
         used_permastore = true;
@@ -3127,7 +3137,7 @@ bool load_ghosts(int max_ghosts, bool creating_level)
         CMD_WIZARD : crawl_state.prev_cmd);
 #endif
 
-    vector<ghost_demon> loaded_ghosts = _load_ephemeral_ghosts();
+    vector<ghost_demon> loaded_ghosts = _levelgen_ghosts(false);
 
     _ghost_dprf("Loaded ghost file with %u ghost(s), will attempt to place %d of them",
              (unsigned int)loaded_ghosts.size(), max_ghosts);

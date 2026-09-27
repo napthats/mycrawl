@@ -143,7 +143,7 @@ The contents of this text are:
                 tile_web_mobile_input_helper
 4-  Character Dump.
 4-a     Saving.
-                dump_on_save
+                dump_on_save, gameio_record
 4-b     Items and Kills.
                 kill_map, dump_kill_places, dump_item_origins,
                 dump_item_origin_price, dump_message_count, dump_order,
@@ -2696,6 +2696,16 @@ tile_web_mobile_input_helper = auto
 dump_on_save = true
         If set to true, a character dump will automatically be created or
         updated when the game is saved.
+
+gameio_record = false
+        (mycrawl) If set to true, the game is recorded in machine-readable
+        form, in records/<name>-<start time>/ in the crawl directory:
+        meta.json (character, seed and version), input.jsonl (every input
+        the game consumed) and events.jsonl (messages, notes, and the
+        visible state at every command prompt). The files are updated while
+        playing, and a game that is loaded again goes on in the same
+        directory. Only a game that was recorded from its start can be
+        replayed.
 
 4-b     Items and Kills.
 ------------------------

@@ -26,6 +26,7 @@
 
 #include "cio.h"
 #include "files.h"
+#include "gameio.h"
 #include "glwrapper.h"
 #include "libutil.h"
 #include "options.h"
@@ -930,6 +931,12 @@ int SDLWrapper::send_textinput(wm_event *event)
 }
 
 int SDLWrapper::wait_event(wm_event *event, int timeout)
+{
+    return gameio::wait_event(event, timeout,
+        [this](wm_event *ev, int t) { return wait_sdl_event(ev, t); });
+}
+
+int SDLWrapper::wait_sdl_event(wm_event *event, int timeout)
 {
     SDL_Event sdlevent;
 

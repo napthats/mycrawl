@@ -68,6 +68,7 @@
 #include "fight.h"
 #include "files.h"
 #include "fineff.h"
+#include "gameio.h"
 #include "god-abil.h"
 #include "god-companions.h"
 #include "god-conduct.h"
@@ -1254,6 +1255,7 @@ static void _input()
         // Flush messages and display message window.
         msgwin_new_cmd();
 
+        gameio::on_command_wait();
         crawl_state.waiting_for_command = true;
         c_input_reset(true);
 

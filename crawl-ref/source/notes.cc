@@ -13,6 +13,7 @@
 
 #include "branch.h"
 #include "english.h"
+#include "gameio.h"
 #include "hiscores.h"
 #include "item-prop.h" // gem_adj
 #include "message.h"
@@ -553,6 +554,8 @@ void take_note(const Note& note, bool force)
     {
         note_list.push_back(note);
         note.check_milestone();
+        gameio::on_note(note.turn, note.place.describe(),
+                        note.describe(false, false, true));
     }
 }
 

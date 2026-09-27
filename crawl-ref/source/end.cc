@@ -17,6 +17,7 @@
 #include "describe.h"
 #include "dungeon.h"
 #include "files.h"
+#include "gameio.h"
 #include "god-abil.h"
 #include "god-passive.h"
 #include "ghost.h"
@@ -433,6 +434,8 @@ NORETURN void end_game(scorefile_entry &se)
 
 NORETURN void game_ended(game_exit exit, const string &message)
 {
+    gameio::game_ended(exit, message);
+
     if (crawl_state.marked_as_won &&
         (exit == game_exit::death || exit == game_exit::leave))
     {
