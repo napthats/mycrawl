@@ -367,6 +367,13 @@ public:
     {
     }
 
+    // mycrawl: all children, internal ones too (for gameio, which reads the
+    // text of a layout).
+    void for_each_child_and_internal(function<void(shared_ptr<Widget>&)> cb)
+    {
+        for_each_child_including_internal(cb);
+    }
+
     // Wrapper functions which handle common behaviour
     // - margins
     // - caching

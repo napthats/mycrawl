@@ -3054,12 +3054,15 @@ static vector<ghost_demon> _load_permastore_ghosts(bool backup_on_upgrade=false)
     return _load_ghosts_core(_bones_permastore_file(), backup_on_upgrade);
 }
 
-// The ghosts that level generation sees. mycrawl: recorded, for replays.
+// The ghosts that level generation sees. mycrawl: recorded, and replayed.
 static vector<ghost_demon> _levelgen_ghosts(bool permastore)
 {
-    vector<ghost_demon> ghosts = permastore ? _load_permastore_ghosts()
-                                            : _load_ephemeral_ghosts();
-    gameio::record_ghosts(permastore ? "perm" : "eph", ghosts);
+    const char *kind = permastore ? "perm" : "eph";
+    vector<ghost_demon> ghosts;
+    if (gameio::replay_ghosts(kind, ghosts))
+        return ghosts;
+    ghosts = permastore ? _load_permastore_ghosts() : _load_ephemeral_ghosts();
+    gameio::record_ghosts(kind, ghosts);
     return ghosts;
 }
 

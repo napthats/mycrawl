@@ -16,6 +16,7 @@
 #include "state.h"
 #include "store.h"
 #include "options.h"
+#include "gameio.h"
 
 namespace rng
 {
@@ -179,6 +180,10 @@ namespace rng
     void reset()
     {
         crawl_state.seed = Options.seed;
+        // mycrawl: a replay of a game with a random seed. (Giving the seed as
+        // Options.seed would make it a custom seed game, which differs.)
+        if (!crawl_state.seed)
+            crawl_state.seed = gameio::replay_seed();
         while (!crawl_state.seed) // 0 = random seed
         {
             rng::seed(); // reset entirely via read_urandom

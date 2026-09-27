@@ -11,12 +11,14 @@
 #include <chrono>
 #include <vector>
 
+#include "gameio.h"
+
 using std::vector;
 
 void transpose_with_monster(monster *mon_to_swap);
 
 void handle_real_time(chrono::time_point<chrono::system_clock> when
-                      = chrono::system_clock::now());
+                      = gameio::clock_now());
 
 bool december_holidays();
 bool today_is_halloween();

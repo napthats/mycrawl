@@ -235,7 +235,10 @@ bool kbhit()
     if (crawl_state.tiles_disabled || crawl_state.seen_hups)
         return false;
     // Look for the presence of any keyboard events in the queue.
-    return gameio::filter_kbhit(wm->next_event_is(WME_KEYDOWN));
+    // mycrawl: keys pressed during a replay only control the replay.
+    if (gameio::replaying())
+        return false;
+    return wm->next_event_is(WME_KEYDOWN);
 }
 
 void console_startup()

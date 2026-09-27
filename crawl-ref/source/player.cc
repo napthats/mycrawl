@@ -39,6 +39,7 @@
 #include "exercise.h"
 #include "files.h"
 #include "fineff.h"
+#include "gameio.h"
 #include "god-abil.h"
 #include "god-conduct.h"
 #include "god-passive.h"
@@ -5609,7 +5610,7 @@ player::player()
 
     delay_queue.clear();
 
-    last_keypress_time = chrono::system_clock::now();
+    last_keypress_time = gameio::clock_now();
 
     action_count.clear();
 

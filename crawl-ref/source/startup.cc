@@ -339,7 +339,7 @@ static void _post_init(bool newc)
 
 
     // Start timer on session.
-    you.last_keypress_time = chrono::system_clock::now();
+    you.last_keypress_time = gameio::clock_now();
 
     // in principle everything here might be skippable if CLUA_BINDINGS is not
     // defined, but do it anyways for consistency with normal builds.
@@ -1004,7 +1004,9 @@ static bool _exit_type_allows_menu_bypass(game_exit exit)
         || exit == game_exit::win
         || exit == game_exit::unknown
         || exit == game_exit::leave
-        || (exit == game_exit::quit && Options.newgame_after_quit);
+        || (exit == game_exit::quit && Options.newgame_after_quit)
+        // mycrawl: a replay goes on after the recorded game saved
+        || gameio::replaying();
 }
 #endif
 

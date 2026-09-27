@@ -2401,6 +2401,8 @@ void read_init_file(bool runscripts)
     Options.basefilename = base_file_name;
     Options.line_num     = -1;
 
+    gameio::after_options_read();
+
 #ifdef DEBUG_DIAGNOSTICS
     vector<string> modified;
     for (const auto *o : Options.get_option_behaviour())
@@ -4846,6 +4848,8 @@ enum commandline_option_type
 #endif
     CLO_RESET_CACHE,
     CLO_LIVE,
+    CLO_REPLAY,
+    CLO_REPLAY_TURN,
 
     CLO_NOPS
 };
@@ -4897,7 +4901,7 @@ static const char *cmd_ops[] =
 #ifdef USE_TILE_WEB
     "webtiles-socket", "await-connection", "print-webtiles-options",
 #endif
-    "reset-cache", "live",
+    "reset-cache", "live", "replay", "replay-turn",
 };
 
 
@@ -6009,6 +6013,24 @@ bool parse_args(int argc, char **argv, bool rc_only)
 
         case CLO_LIVE:
             gameio::force_live();
+            break;
+
+        case CLO_REPLAY:
+        {
+            if (!next_is_param)
+                return false;
+            string error;
+            if (!gameio::set_replay_source(next_arg, error))
+                end(1, false, "Can't replay %s: %s", next_arg, error.c_str());
+            nextUsed = true;
+            break;
+        }
+
+        case CLO_REPLAY_TURN:
+            if (!next_is_param)
+                return false;
+            gameio::set_replay_turn(atoi(next_arg));
+            nextUsed = true;
             break;
 
         case CLO_GDB:

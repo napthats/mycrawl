@@ -12,6 +12,7 @@
 #include <deque>
 
 #include "branch.h"
+#include "cio.h"
 #include "coordit.h"
 #include "env.h"
 #include "files.h"
@@ -364,6 +365,12 @@ static JsonNode *_skills_json()
     return o;
 }
 
+// How many numbers the gameplay RNG gave out in this session.
+static int64_t _gameplay_draws()
+{
+    return (int64_t)rng::get_states()[rng::GAMEPLAY];
+}
+
 // A hash of the visible state, to check that a replay stays in sync.
 static string _state_hash(const vector<string> &rows)
 {
@@ -466,7 +473,7 @@ static void _collect_text(ui::Widget *w, vector<string> &out)
             _collect_text(sw->current_widget().get(), out);
         return;
     }
-    w->for_each_child([&out](shared_ptr<ui::Widget> &child) {
+    w->for_each_child_and_internal([&out](shared_ptr<ui::Widget> &child) {
         _collect_text(child.get(), out);
     });
 }
@@ -660,6 +667,607 @@ static bool _write_state()
 }
 
 /////////////////////////////////////////////////////////////////////////////
+// Replay
+
+enum class replay_kind { input, sync, ghosts, session, end, other };
+
+struct replay_item
+{
+    replay_kind kind = replay_kind::other;
+#ifdef USE_TILE_LOCAL
+    wm_event ev = wm_event();
+#endif
+    // Consumed by a real wait for input, not by an animation's short wait.
+    bool blocking = false;
+    // key_interrupt() call (since the previous input) at which it was first
+    // seen.
+    int kb = -1;
+    // key_interrupt() calls since the previous input.
+    int kc = 0;
+    int64_t w = 0;
+    int n = 0;
+    int turn = 0;
+    string text; // sync: hash, ghosts: kind, session: new/load, end: exit
+    string data; // ghosts: marshalled, in hex
+    int64_t draws = -1; // sync: gameplay RNG draws so far in the session
+    int win_w = 0, win_h = 0; // session: window size
+};
+
+// Milliseconds between inputs; +/- during the replay.
+static const int REPLAY_SPEEDS[] = { 0, 10, 25, 50, 100, 200, 400, 800 };
+static const int REPLAY_DEFAULT_SPEED = 4;
+
+struct replay_state
+{
+    // Started with -replay (stays true after the replay has ended).
+    bool mode = false;
+    // Feeding recorded input to the game.
+    bool active = false;
+    bool finished = false;
+    string source; // the record directory
+    string root;   // <crawl_dir>/replay/: saves, morgue etc. of the replay
+
+    // The character choice.
+    string name;
+    int type = 0, species = 0, job = 0, weapon = 0, pregen = -1;
+    // The game type it was played as (a seeded game can be chosen as a
+    // normal one).
+    int state_type = 0;
+    // The window size of the recorded session, and whether a different
+    // one was reported.
+    int win_w = 0, win_h = 0;
+    bool win_warned = false;
+    string map;
+    uint64_t seed = 0;
+    bool set_up = false;
+
+    vector<replay_item> items;
+    size_t pos = 0;
+    int total_commands = 0;
+    int commands = 0;
+
+    bool paused = false;
+    bool step = false; // run to the next command prompt, then pause
+    int speed = REPLAY_DEFAULT_SPEED;
+    unsigned int last_feed = 0;
+    unsigned int hold_until = 0;
+    int until_turn = -1;
+
+    int kb_calls = 0;
+    bool arrived = false;
+    bool motion_sent = false;
+    int64_t clock_ms = 0;
+
+    int desyncs = 0;
+    string status;
+    FILE *log = nullptr;
+};
+
+static replay_state rp;
+
+static double _jnum(const JsonNode *o, const char *key, double def = 0)
+{
+    const JsonNode *n = json_find_member(o, key);
+    return n && n->tag == JSON_NUMBER ? n->number_ : def;
+}
+
+static string _jstr(const JsonNode *o, const char *key)
+{
+    const JsonNode *n = json_find_member(o, key);
+    return n && n->tag == JSON_STRING ? n->string_ : "";
+}
+
+static bool _jbool(const JsonNode *o, const char *key)
+{
+    const JsonNode *n = json_find_member(o, key);
+    return n && n->tag == JSON_BOOL && n->bool_;
+}
+
+static vector<string> _jstrings(const JsonNode *o, const char *key)
+{
+    vector<string> result;
+    const JsonNode *a = json_find_member(o, key);
+    if (!a || a->tag != JSON_ARRAY)
+        return result;
+    const JsonNode *e;
+    json_foreach(e, a)
+        if (e->tag == JSON_STRING)
+            result.emplace_back(e->string_);
+    return result;
+}
+
+static bool _read_file(const string &path, string &out)
+{
+    FILE *f = fopen_u(path.c_str(), "rb");
+    if (!f)
+        return false;
+    char buf[65536];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+        out.append(buf, n);
+    fclose(f);
+    return true;
+}
+
+static vector<unsigned char> _unhex(const string &s)
+{
+    vector<unsigned char> buf;
+    auto val = [](char c) {
+        return c <= '9' ? c - '0' : c - 'a' + 10;
+    };
+    for (size_t i = 0; i + 1 < s.size(); i += 2)
+        buf.push_back(val(s[i]) << 4 | val(s[i + 1]));
+    return buf;
+}
+
+static replay_item _parse_replay_item(const JsonNode *o)
+{
+    replay_item it;
+    const string t = _jstr(o, "t");
+    it.w = (int64_t)_jnum(o, "w");
+    it.turn = (int)_jnum(o, "turn");
+    it.n = (int)_jnum(o, "n");
+    if (t == "key" || t == "mouse")
+    {
+        it.kind = replay_kind::input;
+        it.blocking = _jbool(o, "blk");
+        it.kb = (int)_jnum(o, "kb", -1);
+        it.kc = (int)_jnum(o, "kc", 0);
+#ifdef USE_TILE_LOCAL
+        if (t == "key")
+        {
+            it.ev.type = WME_KEYDOWN;
+            it.ev.key.keysym.sym = (int)_jnum(o, "k");
+        }
+        else
+        {
+            it.ev.type = (unsigned char)_jnum(o, "e");
+            it.ev.mouse_event.event
+                = (wm_mouse_event::mouse_event_type)(int)_jnum(o, "ev");
+            it.ev.mouse_event.button
+                = (wm_mouse_event::mouse_event_button)(int)_jnum(o, "b");
+            it.ev.mouse_event.held = (unsigned short)_jnum(o, "h");
+            it.ev.mouse_event.mod = (unsigned char)_jnum(o, "m");
+            it.ev.mouse_event.px = (unsigned int)_jnum(o, "x");
+            it.ev.mouse_event.py = (unsigned int)_jnum(o, "y");
+        }
+#endif
+    }
+    else if (t == "sync")
+    {
+        it.kind = replay_kind::sync;
+        it.text = _jstr(o, "h");
+        it.draws = (int64_t)_jnum(o, "g", -1);
+    }
+    else if (t == "ghosts")
+    {
+        it.kind = replay_kind::ghosts;
+        it.text = _jstr(o, "kind");
+        it.data = _jstr(o, "data");
+    }
+    else if (t == "session")
+    {
+        it.kind = replay_kind::session;
+        it.text = _jstr(o, "ev");
+        const JsonNode *win = json_find_member(o, "win");
+        if (win && win->tag == JSON_ARRAY)
+        {
+            const JsonNode *w = json_find_element(win, 0);
+            const JsonNode *h = json_find_element(win, 1);
+            if (w && h && w->tag == JSON_NUMBER && h->tag == JSON_NUMBER)
+            {
+                it.win_w = (int)w->number_;
+                it.win_h = (int)h->number_;
+            }
+        }
+    }
+    else if (t == "end")
+    {
+        it.kind = replay_kind::end;
+        it.text = _jstr(o, "exit");
+    }
+    return it;
+}
+
+static void _remove_files_below(const string &dir)
+{
+    for (const string &f : get_dir_files_recursive(dir, "", -1, false))
+        unlink_u(catpath(dir, f).c_str());
+}
+
+bool replaying()
+{
+    return rp.active;
+}
+
+uint64_t replay_seed()
+{
+    return rp.active && !rp.set_up && rp.state_type != GAME_TYPE_CUSTOM_SEED
+           ? rp.seed : 0;
+}
+
+void set_replay_turn(int turn)
+{
+    rp.until_turn = turn;
+}
+
+bool set_replay_source(const string &path, string &error)
+{
+    if (rp.mode)
+        return true; // the command line is parsed twice
+
+    string dir = path;
+    if (!dir_exists(dir))
+        dir = get_parent_directory(dir);
+
+    string text;
+    if (!_read_file(catpath(dir, "meta.json"), text))
+    {
+        error = "no meta.json in " + dir;
+        return false;
+    }
+    JsonWrapper meta(json_decode(text.c_str()));
+    if (!meta.node || meta->tag != JSON_OBJECT)
+    {
+        error = "meta.json is broken";
+        return false;
+    }
+    const JsonNode *ng = json_find_member(meta.node, "newgame");
+    if (!_jbool(meta.node, "replayable") || !ng)
+    {
+        error = "this game wasn't recorded from its start";
+        return false;
+    }
+    rp.name = _jstr(meta.node, "name");
+    rp.seed = strtoull(_jstr(meta.node, "seed").c_str(), nullptr, 10);
+    rp.type = (int)_jnum(ng, "type");
+    rp.state_type = (int)_jnum(meta.node, "state_type", rp.type);
+    rp.species = (int)_jnum(ng, "species");
+    rp.job = (int)_jnum(ng, "job");
+    rp.weapon = (int)_jnum(ng, "weapon");
+    rp.map = _jstr(ng, "map");
+    rp.pregen = (int)_jnum(meta.node, "pregen", -1);
+
+    text.clear();
+    if (!_read_file(catpath(dir, "input.jsonl"), text))
+    {
+        error = "no input.jsonl in " + dir;
+        return false;
+    }
+    size_t start = 0;
+    while (start < text.size())
+    {
+        size_t end = text.find('\n', start);
+        if (end == string::npos)
+            end = text.size();
+        const string line = text.substr(start, end - start);
+        start = end + 1;
+        JsonWrapper o(json_decode(line.c_str()));
+        // The last line of a crashed game may be cut short.
+        if (!o.node || o->tag != JSON_OBJECT)
+            continue;
+        rp.items.push_back(_parse_replay_item(o.node));
+        if (rp.items.back().kind == replay_kind::sync)
+            ++rp.total_commands;
+    }
+
+    // Everything the replayed game writes goes to <crawl_dir>/replay/.
+    rp.root = catpath(SysEnv.crawl_dir, "replay");
+    string saves = catpath(rp.root, "saves");
+    string morgue = catpath(rp.root, "morgue");
+    if (!check_mkdir("Replay directory", &rp.root)
+        || !check_mkdir("Replay saves", &saves)
+        || !check_mkdir("Replay morgue", &morgue))
+    {
+        error = "can't create " + rp.root;
+        return false;
+    }
+    _remove_files_below(rp.root);
+    _copy_file(catpath(dir, "macro.txt"), catpath(rp.root, "macro.txt"));
+
+    // The options of the recorded game.
+    SysEnv.crawl_rc = catpath(dir, "init.txt");
+    SysEnv.macro_dir = rp.root;
+    SysEnv.extra_opts_first = _jstrings(meta.node, "extra_opts_first");
+    SysEnv.extra_opts_last = _jstrings(meta.node, "extra_opts_last");
+
+    rp.log = fopen_u(catpath(rp.root, "replay.log").c_str(), "wb");
+    if (rp.log)
+    {
+        fprintf(rp.log, "Replaying %s (%s, this build %s): %d commands\n",
+                dir.c_str(), _jstr(meta.node, "version").c_str(),
+                Version::Long, rp.total_commands);
+        fflush(rp.log);
+    }
+
+    rp.source = dir;
+    rp.mode = true;
+    return true;
+}
+
+void after_options_read()
+{
+    if (!rp.mode)
+        return;
+
+    Options.save_dir = catpath(rp.root, "saves/");
+    Options.shared_dir = Options.save_dir; // scores, logfile, bones
+    Options.morgue_dir = catpath(rp.root, "morgue/");
+    Options.gameio_record = false;
+    // Saving in the recorded game saved and loaded it again: so does the
+    // replay.
+    Options.restart_after_game = true;
+    Options.restart_after_save = true;
+
+    if (rp.finished)
+        return;
+    Options.name_bypasses_menu = true;
+    Options.game.name = rp.name;
+    // A custom seed game is started as a normal game with a seed, which
+    // makes it a custom seed one (choosing a custom seed game would ask for
+    // the seed). Any other game gets its seed from replay_seed(), since a
+    // seed in the options would turn it into a custom seed game, and those
+    // play differently (e.g. the welcome message draws no random number).
+    const bool custom_seed = rp.state_type == GAME_TYPE_CUSTOM_SEED;
+    Options.game.type = custom_seed ? GAME_TYPE_NORMAL : (game_type)rp.type;
+    Options.game.species = (species_type)rp.species;
+    Options.game.job = (job_type)rp.job;
+    Options.game.weapon = (weapon_type)rp.weapon;
+    Options.game.map = rp.map;
+    Options.game.fully_random = false;
+    Options.seed = Options.seed_from_rc = custom_seed ? rp.seed : 0;
+    if (!rp.set_up && rp.pregen >= 0)
+        Options.pregen_dungeon = (level_gen_type)rp.pregen;
+}
+
+static void _replay_log(const string &what)
+{
+    if (!rp.log)
+        return;
+    fprintf(rp.log, "[cmd %d, turn %d] %s\n", rp.commands,
+            crawl_state.game_started ? you.num_turns : 0, what.c_str());
+    fflush(rp.log);
+}
+
+static const char *_kind_name(replay_kind kind)
+{
+    switch (kind)
+    {
+    case replay_kind::input:   return "input";
+    case replay_kind::sync:    return "a command prompt";
+    case replay_kind::ghosts:  return "loading ghosts";
+    case replay_kind::session: return "a session start";
+    case replay_kind::end:     return "a game end";
+    default:                   return "something else";
+    }
+}
+
+static void _replay_title()
+{
+#ifdef USE_TILE_LOCAL
+    if (!wm)
+        return;
+    string title;
+    if (rp.active)
+    {
+        title = make_stringf("Replay %s | command %d/%d | %s | ",
+                             rp.name.c_str(), rp.commands, rp.total_commands,
+                             rp.paused ? "PAUSED"
+                             : make_stringf("%dms/key",
+                                            REPLAY_SPEEDS[rp.speed]).c_str());
+        if (rp.desyncs)
+            title += make_stringf("%d desync(s), see replay.log | ", rp.desyncs);
+        title += "space: pause, +/-: speed, .: step, q: stop";
+    }
+    else
+    {
+        title = string(CRAWL " ") + Version::Long;
+        if (!rp.status.empty())
+            title += " | " + rp.status;
+    }
+    wm->set_window_title(title.c_str());
+#endif
+}
+
+static void _replay_desync(const string &what)
+{
+    ++rp.desyncs;
+    rp.paused = true;
+    rp.step = false;
+    _replay_log("DESYNC: " + what);
+    _replay_title();
+}
+
+static void _replay_stop(const string &why)
+{
+    rp.active = false;
+    rp.finished = true;
+    rp.status = why;
+    // From here on it's an ordinary game: no more automatic new games.
+    Options.name_bypasses_menu = false;
+    _replay_log(why);
+    _replay_title();
+}
+
+// Moves past the next item of the given kind (reporting whatever was
+// skipped). Returns it, or nullptr if there's none.
+static const replay_item *_replay_take(replay_kind kind, const string &text = "")
+{
+    size_t i = rp.pos;
+    while (i < rp.items.size()
+           && (rp.items[i].kind != kind
+               || !text.empty() && rp.items[i].text != text))
+    {
+        ++i;
+    }
+    if (i >= rp.items.size())
+    {
+        _replay_desync(make_stringf("expected %s, but the record has no more",
+                                    _kind_name(kind)));
+        return nullptr;
+    }
+    if (i != rp.pos)
+    {
+        _replay_desync(make_stringf("expected %s, but the record has %s",
+                                    _kind_name(kind),
+                                    _kind_name(rp.items[rp.pos].kind)));
+    }
+    rp.pos = i + 1;
+    return &rp.items[i];
+}
+
+static bool _replay_fast_forward()
+{
+    return rp.until_turn >= 0
+           && (!crawl_state.game_started || you.num_turns < rp.until_turn);
+}
+
+static void _replay_note_window(const replay_item &session)
+{
+    rp.win_w = session.win_w;
+    rp.win_h = session.win_h;
+}
+
+static void _replay_game_starting()
+{
+    if (rp.finished)
+        return;
+    rp.active = true;
+    rp.kb_calls = 0;
+    rp.arrived = false;
+    if (const replay_item *it = _replay_take(replay_kind::session, "new"))
+    {
+        rp.clock_ms = it->w;
+        _replay_note_window(*it);
+    }
+#ifdef USE_TILE_LOCAL
+    if (wm)
+        rp.hold_until = wm->get_ticks() + 1500;
+#endif
+    _replay_log("new game");
+    _replay_title();
+}
+
+static void _replay_game_loaded()
+{
+    if (!rp.active)
+        return;
+    rp.kb_calls = 0;
+    rp.arrived = false;
+    if (const replay_item *it = _replay_take(replay_kind::session, "load"))
+    {
+        rp.clock_ms = it->w;
+        _replay_note_window(*it);
+    }
+    _replay_log("game loaded");
+}
+
+static void _replay_game_ended(game_exit exit)
+{
+    if (!rp.active)
+        return;
+    _replay_take(replay_kind::end, _exit_name(exit));
+    _replay_log("game ended: " + _exit_name(exit));
+    if (rp.pos >= rp.items.size())
+        _replay_stop("replay finished");
+}
+
+static void _replay_command_wait()
+{
+    if (rp.pos < rp.items.size() && rp.items[rp.pos].kind == replay_kind::sync)
+    {
+        const replay_item &it = rp.items[rp.pos++];
+        rp.commands = it.n;
+        rng::generator ui_rng(rng::UI);
+        const vector<string> rows = _map_rows();
+        if (it.draws >= 0 && _gameplay_draws() != it.draws)
+        {
+            _replay_log(make_stringf("gameplay RNG draws: %" PRId64
+                                     " in the record, %" PRId64 " now",
+                                     it.draws, _gameplay_draws()));
+        }
+        if (_state_hash(rows) != it.text)
+        {
+            _replay_desync(make_stringf("the state differs from the record "
+                                        "(recorded turn %d)", it.turn));
+            // What the replay has, to compare with events.jsonl.
+            if (rp.log)
+            {
+                JsonNode *s = json_mkobject();
+                _add(s, "you", _player_json());
+                _add(s, "mons", _monsters_json());
+                _add(s, "inv", _inventory_json());
+                _add(s, "map", _map_json(rows));
+                fprintf(rp.log, "%s\n", _encode(s).c_str());
+                fflush(rp.log);
+            }
+        }
+    }
+    else
+    {
+        _replay_desync(make_stringf("a command prompt where the record has %s",
+                                    rp.pos < rp.items.size()
+                                    ? _kind_name(rp.items[rp.pos].kind)
+                                    : "nothing more"));
+    }
+
+    if (rp.step)
+    {
+        rp.step = false;
+        rp.paused = true;
+    }
+    if (rp.until_turn >= 0 && you.num_turns >= rp.until_turn)
+    {
+        rp.until_turn = -1;
+        rp.paused = true;
+    }
+    _replay_title();
+}
+
+bool replay_ghosts(const char *kind, vector<ghost_demon> &ghosts)
+{
+    if (!rp.active)
+        return false;
+    ghosts.clear();
+    // Never the bones files: whatever the recorded game found.
+    if (rp.pos >= rp.items.size() || rp.items[rp.pos].kind != replay_kind::ghosts
+        || rp.items[rp.pos].text != kind)
+    {
+        _replay_desync(make_stringf("loading %s ghosts where the record has %s",
+                                    kind, rp.pos < rp.items.size()
+                                    ? _kind_name(rp.items[rp.pos].kind)
+                                    : "nothing more"));
+        return true;
+    }
+    const replay_item &it = rp.items[rp.pos++];
+    if (!it.data.empty())
+    {
+        try
+        {
+            reader r(_unhex(it.data), TAG_MINOR_VERSION);
+            ghosts = tag_read_ghosts(r);
+        }
+        catch (...)
+        {
+            _replay_desync("broken ghost data");
+        }
+    }
+    return true;
+}
+
+chrono::system_clock::time_point clock_now()
+{
+    if (rp.active && rp.clock_ms)
+        return chrono::system_clock::time_point(chrono::milliseconds(rp.clock_ms));
+    return chrono::system_clock::now();
+}
+
+time_t time_now()
+{
+    return chrono::system_clock::to_time_t(clock_now());
+}
+
+/////////////////////////////////////////////////////////////////////////////
 // Play records
 
 struct record_state
@@ -675,14 +1283,16 @@ struct record_state
     vector<string> pending_events;
 
     int cmd_seq = 0;
+    // Options.pregen_dungeon when the game was set up.
+    int pregen = -1;
 
     // For the diffs in the command snapshots.
     string last_place;
     vector<string> last_rows;
     string last_inv, last_spells, last_skills;
 
-    // kbhit() calls since the last recorded input, and the call at which a
-    // key was first seen waiting.
+    // key_interrupt() calls since the last recorded input, and the call at
+    // which a key was first seen waiting.
     int kb_calls = 0;
     int kb_first = -1;
 };
@@ -772,7 +1382,10 @@ static void _write_meta(const string &dir, const newgame_def *ng)
     // Strings, since JSON numbers can't hold all 64-bit values.
     _add(m, "seed", make_stringf("%" PRIu64, you.game_seed));
     _add(m, "game_type", gametype_to_str(crawl_state.type));
+    _add(m, "state_type", (double)crawl_state.type);
     _add(m, "replayable", ng != nullptr);
+    if (rec.pregen >= 0)
+        _add(m, "pregen", (double)rec.pregen);
     if (ng)
     {
         JsonNode *choice = json_mkobject();
@@ -780,6 +1393,7 @@ static void _write_meta(const string &dir, const newgame_def *ng)
         _add(choice, "species", (double)ng->species);
         _add(choice, "job", (double)ng->job);
         _add(choice, "weapon", (double)ng->weapon);
+        _add(choice, "map", ng->map);
         _add(m, "newgame", choice);
     }
     _add(m, "rc_file", Options.filename);
@@ -805,19 +1419,43 @@ static JsonNode *_session_json(const char *what)
     _add(s, "version", Version::Long);
     _add(s, "turn", (double)you.num_turns);
     _add(s, "time", (double)you.elapsed_time);
+    _add(s, "g", (double)_gameplay_draws());
+#ifdef USE_TILE_LOCAL
+    if (wm)
+    {
+        JsonNode *win = json_mkarray();
+        json_append_element(win, json_mknumber(wm->screen_width()));
+        json_append_element(win, json_mknumber(wm->screen_height()));
+        _add(s, "win", win);
+    }
+#endif
     return s;
 }
 
 void game_starting()
 {
+    if (rp.mode)
+    {
+        _replay_game_starting();
+        return;
+    }
     _close_records();
     if (!Options.gameio_record)
         return;
     rec.armed = true;
+    rec.pregen = (int)Options.pregen_dungeon;
 }
 
 void game_started(bool new_game, const newgame_def *ng)
 {
+    if (rp.mode)
+    {
+        if (new_game)
+            rp.set_up = true;
+        else
+            _replay_game_loaded();
+        return;
+    }
     if (!Options.gameio_record)
     {
         _close_records();
@@ -843,6 +1481,17 @@ void game_started(bool new_game, const newgame_def *ng)
             _copy_file(Options.filename, catpath(dir, "init.txt"));
             _copy_file(catpath(Options.macro_dir, "macro.txt"),
                        catpath(dir, "macro.txt"));
+        }
+    }
+
+    // Commands are numbered through all sessions of the game.
+    string old_input;
+    if (!new_game && _read_file(catpath(dir, "input.jsonl"), old_input))
+    {
+        for (size_t p = old_input.find("\"t\":\"sync\""); p != string::npos;
+             p = old_input.find("\"t\":\"sync\"", p + 1))
+        {
+            ++rec.cmd_seq;
         }
     }
 
@@ -875,6 +1524,11 @@ void game_started(bool new_game, const newgame_def *ng)
 
 void game_ended(game_exit exit, const string &message)
 {
+    if (rp.mode)
+    {
+        _replay_game_ended(exit);
+        return;
+    }
     if (rec.active)
     {
         rng::generator ui_rng(rng::UI);
@@ -924,6 +1578,11 @@ void on_note(int turn, const string &place, const string &text)
 
 void on_command_wait()
 {
+    if (rp.active)
+    {
+        _replay_command_wait();
+        return;
+    }
     if (!rec.active)
         return;
     rng::generator ui_rng(rng::UI);
@@ -978,6 +1637,9 @@ void on_command_wait()
     _add(s, "n", (double)seq);
     _add(s, "turn", (double)you.num_turns);
     _add(s, "h", hash);
+    // Not visible in the game, but it shows a replay going wrong before
+    // anything visible does.
+    _add(s, "g", (double)_gameplay_draws());
     _write_input(s);
 }
 
@@ -1045,6 +1707,8 @@ static void _record_input(const wm_event &ev, bool blocking)
         _add(e, "blk", true);
     if (rec.kb_first >= 0)
         _add(e, "kb", (double)rec.kb_first);
+    if (rec.kb_calls)
+        _add(e, "kc", (double)rec.kb_calls);
     _write_input(e);
     rec.kb_calls = 0;
     rec.kb_first = -1;
@@ -1061,9 +1725,168 @@ static void _consumed(const wm_event &ev, bool blocking)
     }
 }
 
+static bool _is_user_input(const wm_event &ev)
+{
+    return ev.type == WME_KEYDOWN || ev.type == WME_MOUSEBUTTONDOWN
+           || ev.type == WME_MOUSEBUTTONUP || ev.type == WME_MOUSEWHEEL;
+}
+
+// Keys pressed during a replay control it.
+static void _replay_control(int key)
+{
+    switch (key)
+    {
+    case ' ':
+        rp.paused = !rp.paused;
+        rp.step = false;
+        break;
+    case '+':
+    case '=':
+        rp.speed = max(0, rp.speed - 1);
+        break;
+    case '-':
+        rp.speed = min((int)ARRAYSZ(REPLAY_SPEEDS) - 1, rp.speed + 1);
+        break;
+    case '.':
+        rp.paused = false;
+        rp.step = true;
+        break;
+    case 'q':
+    case CK_ESCAPE:
+        _replay_stop("replay stopped: you have control");
+        return;
+    default:
+        return;
+    }
+    _replay_title();
+}
+
+// Whether the next recorded input may be given to this wait.
+static bool _replay_ready(const replay_item &it, bool blocking)
+{
+    if (!blocking && it.blocking)
+        return false;
+    // key_interrupt() already said it's there.
+    if (rp.arrived)
+        return true;
+    if (rp.paused)
+        return false;
+    // Let the new window settle (resize and lay out) first: mouse input is
+    // in window coordinates.
+    if (wm->get_ticks() < rp.hold_until)
+        return false;
+    if (_replay_fast_forward())
+        return true;
+    return wm->get_ticks() - rp.last_feed
+           >= (unsigned int)REPLAY_SPEEDS[rp.speed];
+}
+
+static int _replay_wait(wm_event *event, int timeout,
+                        const function<int(wm_event *, int)> &raw_wait)
+{
+    const bool blocking = timeout == INT_MAX;
+    const unsigned int start = wm->get_ticks();
+    while (rp.active)
+    {
+        // Real events first, so that e.g. a resize is handled before
+        // recorded input that depends on the layout.
+        if (raw_wait(event, 0))
+        {
+            if (!_is_user_input(*event))
+                return 1; // window events, timers, mouse motion
+            if (event->type == WME_KEYDOWN)
+                _replay_control(event->key.keysym.sym);
+            continue;
+        }
+
+        if (rp.pos >= rp.items.size())
+        {
+            _replay_stop("replay finished: you have control");
+            break;
+        }
+        const replay_item &it = rp.items[rp.pos];
+        if (it.kind == replay_kind::input)
+        {
+            if (_replay_ready(it, blocking))
+            {
+                // Hover first, as the mouse would have moved there.
+                if (it.ev.type == WME_MOUSEBUTTONDOWN && !rp.motion_sent)
+                {
+                    *event = wm_event();
+                    event->type = WME_MOUSEMOTION;
+                    event->mouse_event = it.ev.mouse_event;
+                    event->mouse_event.event = wm_mouse_event::MOVE;
+                    event->mouse_event.button = wm_mouse_event::NONE;
+                    event->mouse_event.held = 0; // not a drag
+                    rp.motion_sent = true;
+                    return 1;
+                }
+                // Mouse input is in window coordinates, so it only replays well
+                // in a window of the same size.
+                if (it.ev.type != WME_KEYDOWN && rp.win_w && !rp.win_warned
+                    && (rp.win_w != wm->screen_width()
+                        || rp.win_h != wm->screen_height()))
+                {
+                    rp.win_warned = true;
+                    _replay_log(make_stringf("the window is %dx%d, but was "
+                                             "%dx%d: mouse input may land "
+                                             "elsewhere",
+                                             wm->screen_width(),
+                                             wm->screen_height(),
+                                             rp.win_w, rp.win_h));
+                }
+                if (rp.kb_calls != it.kc)
+                {
+                    _replay_log(make_stringf("key_interrupt() calls before input %d: "
+                                             "%d in the record, %d now",
+                                             (int)rp.pos, it.kc, rp.kb_calls));
+                }
+                *event = it.ev;
+                ++rp.pos;
+                ++live.inputs;
+                live.dirty = true;
+                rp.kb_calls = 0;
+                rp.arrived = false;
+                rp.motion_sent = false;
+                rp.clock_ms = it.w;
+                rp.last_feed = wm->get_ticks();
+                return 1;
+            }
+        }
+        else if (blocking && crawl_state.game_started
+                 && (it.kind == replay_kind::sync
+                     || it.kind == replay_kind::ghosts))
+        {
+            // Waiting for input where the record went on without any.
+            _replay_desync(make_stringf("waiting for input where the record "
+                                        "has %s", _kind_name(it.kind)));
+            ++rp.pos;
+            continue;
+        }
+
+        // The live API can watch a replay.
+        if (blocking && _live_enabled() && live.dirty && _prepare_live_dir()
+            && _write_state())
+        {
+            live.dirty = false;
+        }
+
+        const unsigned int elapsed = wm->get_ticks() - start;
+        if (!blocking && elapsed >= (unsigned int)timeout)
+            return 0;
+        // Wait a little for real events (handled at the top of the loop).
+        const int slice = blocking ? 10 : min(10, timeout - (int)elapsed);
+        wm->delay(slice);
+    }
+    return wait_event(event, timeout, raw_wait);
+}
+
 int wait_event(wm_event *event, int timeout,
                const function<int(wm_event *, int)> &raw_wait)
 {
+    if (rp.active)
+        return _replay_wait(event, timeout, raw_wait);
+
     // Waiting for the player: a good time to get the records onto disk.
     const bool blocking = timeout == INT_MAX;
     if (blocking)
@@ -1105,10 +1928,37 @@ int wait_event(wm_event *event, int timeout,
     }
 }
 
+#endif
+
 // Replaying has to know when a key interrupted something (e.g. travel), so
-// the kbhit() call at which a waiting key was first seen is recorded.
-bool filter_kbhit(bool real)
+// the key_interrupt() call at which a waiting key was first seen is
+// recorded.
+bool key_interrupt()
 {
+#ifndef USE_TILE_LOCAL
+    return kbhit();
+#else
+    // (During a replay, kbhit() is false: keys pressed then control it.)
+    const bool real = kbhit();
+    if (rp.active)
+    {
+        // Keys pressed now are for controlling the replay; what the game
+        // sees is whether the recorded game saw a key here. That key is the
+        // next input, which may come after sync markers (e.g. travel stops,
+        // then the key is read at the command prompt).
+        size_t next = rp.pos;
+        while (next < rp.items.size()
+               && (rp.items[next].kind == replay_kind::sync
+                   || rp.items[next].kind == replay_kind::ghosts))
+        {
+            ++next;
+        }
+        if (next < rp.items.size() && rp.items[next].kb == rp.kb_calls)
+            rp.arrived = true;
+        ++rp.kb_calls;
+        return rp.arrived;
+    }
+
     if (_recording())
     {
         if (real && rec.kb_first < 0)
@@ -1116,7 +1966,7 @@ bool filter_kbhit(bool real)
         ++rec.kb_calls;
     }
     return real;
-}
 #endif
+}
 
 }

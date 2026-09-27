@@ -599,6 +599,8 @@ static void _show_commandline_options_help()
     puts("  -builddb         don't start the game; rebuild the .des cache and exit");
     puts("  -reset-cache     force a full rebuild of the .des cache");
     puts("  -live            enable the file-based live API (gameio_live)");
+    puts("  -replay <dir>    replay a game recorded with gameio_record");
+    puts("  -replay-turn <n> replay at full speed up to turn n, then pause");
     puts("  -dump-maps       write map Lua to stderr when parsing .des files");
 #ifndef TARGET_OS_WINDOWS
     puts("  -gdb/-no-gdb     produce gdb backtrace when a crash happens (default:on)");
@@ -1112,7 +1114,7 @@ static void _input()
     ASSERT(you.hp > 0);
 
     if (crawl_state.is_replaying_keys() && crawl_state.is_repeating_cmd()
-        && kbhit())
+        && gameio::key_interrupt())
     {
         // User pressed a key, so stop repeating commands and discard
         // the keypress.
@@ -1222,7 +1224,7 @@ static void _input()
         // Lua stack must be empty. Unless there's a leak.
         ASSERT(lua_gettop(clua.state()) == 0);
 
-        if (!has_pending_input() && !kbhit())
+        if (!has_pending_input() && !gameio::key_interrupt())
         {
             if (++crawl_state.lua_calls_no_turn > 1000)
                 mprf(MSGCH_ERROR, "Infinite lua loop detected, aborting.");

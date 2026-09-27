@@ -2705,7 +2705,15 @@ gameio_record = false
         visible state at every command prompt). The files are updated while
         playing, and a game that is loaded again goes on in the same
         directory. Only a game that was recorded from its start can be
-        replayed.
+        replayed: crawl -replay <record directory> starts a new game with
+        the recorded character, seed and options, and feeds it the
+        recorded input (space pauses, + and - change the speed, . steps to
+        the next command, q stops and hands over control). The replayed
+        game keeps its saves, morgue and scores in replay/ in the crawl
+        directory, and replay/replay.log says where it went out of step
+        with the record, if it did. -replay-turn <n> goes at full speed up
+        to turn n, then pauses. A replay needs the same build, and mouse
+        input only lands in the same place in a window of the same size.
 
 gameio_live = false
         (mycrawl) If set to true (or with -live on the command line), other

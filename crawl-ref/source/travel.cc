@@ -32,6 +32,7 @@
 #include "english.h"
 #include "env.h"
 #include "files.h"
+#include "gameio.h"
 #include "format.h"
 #include "god-abil.h"
 #include "god-passive.h"
@@ -1059,7 +1060,7 @@ command_type travel()
 
     command_type result = CMD_NO_CMD;
 
-    if (Options.travel_key_stop && kbhit())
+    if (Options.travel_key_stop && gameio::key_interrupt())
     {
         mprf("Key pressed, stopping %s.", you.running.runmode_name().c_str());
         stop_running();

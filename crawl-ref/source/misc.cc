@@ -195,7 +195,7 @@ string attacked_monster_list::describe() const
  */
 bool today_is_halloween()
 {
-    const time_t curr_time = time(nullptr);
+    const time_t curr_time = gameio::time_now();
     const struct tm *date = TIME_FN(&curr_time);
     // tm_mon is zero-based in case you are wondering
     // Oct 30th-31th, Nov 1st
@@ -215,7 +215,7 @@ bool december_holidays()
 #else
     if (Options.tile_grinch)
         return false;
-    const time_t curr_time = time(nullptr);
+    const time_t curr_time = gameio::time_now();
     const struct tm *date = TIME_FN(&curr_time);
     // Give em two weeks before Christmas and then until New Year's.
     // (tm_mon is zero-based.)
@@ -228,7 +228,7 @@ bool december_holidays()
  */
 bool today_is_serious()
 {
-    const time_t curr_time = time(nullptr);
+    const time_t curr_time = gameio::time_now();
     const struct tm *date = TIME_FN(&curr_time);
     // As ever, note that tm_mon is 0-based.
     // March 31st, April 1st-2nd

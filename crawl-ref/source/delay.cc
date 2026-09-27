@@ -28,6 +28,7 @@
 #include "env.h"
 #include "fineff.h"
 #include "fprop.h"
+#include "gameio.h"
 #include "god-companions.h"
 #include "god-passive.h"
 #include "god-wrath.h"
@@ -404,7 +405,7 @@ bool already_learning_spell(int spell)
 
 static command_type _get_running_command()
 {
-    if (Options.travel_key_stop && kbhit()
+    if (Options.travel_key_stop && gameio::key_interrupt()
         || !in_bounds(you.pos() + you.running.pos))
     {
         stop_running();
