@@ -303,6 +303,16 @@ static JsonNode *_player_json()
     if (!you_worship(GOD_NO_GOD))
         _add(p, "piety_rank", (double)piety_rank());
     _add(p, "status", _strings(_status_lights()));
+    // Poison: the HP it is predicted to leave, as the status (@) shows it
+    // ("poisoned (hp -> N)"), and the part of the HP bar it colours.
+    if (get_player_poisoning())
+    {
+        JsonNode *pois = json_mkobject();
+        const int after = poison_survival();
+        _add(pois, "hp_after", (double)after);
+        _add(pois, "damage", (double)(you.hp - max(0, after)));
+        _add(p, "poison", pois);
+    }
     // The rest of the status panel: the noise bar (0-1000, and the band its
     // colour shows), the quiver line and how long the last action took.
     const bool silence = silenced(you.pos());
