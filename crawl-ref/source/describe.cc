@@ -5258,6 +5258,7 @@ struct mon_attack_desc_info
     vector<string> attack_descriptions;
     vector<string> damage_descriptions;
     vector<string> bonus_descriptions;
+    vector<monster_attack_row> rows; // the same rows, for gameio
 };
 
 static void _check_attack_counts_and_flavours(const monster_info &mi,
@@ -5499,6 +5500,9 @@ static void _attacks_table_row(const monster_info &mi, mon_attack_desc_info &di,
 
     di.bonus_descriptions.emplace_back(bonus_desc);
     di.bonus_width = max(di.bonus_width, bonus_desc.size());
+
+    di.rows.push_back({attk_name + weapon_descriptor, max(attk_mult, 1),
+                       ranged, real_dam, dam, final_dam_str, bonus_desc});
 }
 
 // Get all the info required to form an attacks table row for the monster's
@@ -5520,6 +5524,7 @@ static void _attacks_table_row_throwing(const monster_info &mi,
     di.attk_desc_width = max(di.attk_desc_width, throw_str.size());
 
     string dam_desc = "0";
+    int max_dam = 0;
     string bonus_desc = "";
     if (quiv->sub_type == MI_THROWING_NET)
         bonus_desc = "Ensnare in a net";
@@ -5529,6 +5534,7 @@ static void _attacks_table_row_throwing(const monster_info &mi,
         {
         case SPMSL_CURARE:
             dam_desc = "12 (curare)"; // direct curare damage is 2d6
+            max_dam = 12;
             bonus_desc = "Poison and slowing";
             break;
         case SPMSL_POISONED:
@@ -5568,12 +5574,16 @@ static void _attacks_table_row_throwing(const monster_info &mi,
             silver_str = make_stringf(" + %d (silver)", silver_dam);
         }
         dam_desc = make_stringf("%d%s", dam, silver_str.c_str());
+        max_dam = dam;
     }
 
     di.damage_descriptions.emplace_back(dam_desc);
     di.bonus_descriptions.emplace_back(bonus_desc);
     di.damage_width = max(di.damage_width, dam_desc.size());
     di.bonus_width = max(di.bonus_width, bonus_desc.size());
+
+    di.rows.push_back({throw_str, 1, true, max_dam, max_dam, dam_desc,
+                       bonus_desc});
 }
 
 // Build the table of attacks, for real
@@ -5617,18 +5627,16 @@ static void _build_table_of_attacks(mon_attack_desc_info &di,
     }
 }
 
-// Get a description of the monster's to-hit, the player's to-hit against
-// the monster, and a table of attacks, for the monster description.
-static string _monster_attacks_description(const monster_info& mi)
+// Gather the rows of the table of attacks into di. False if there is no
+// table.
+static bool _gather_attacks(const monster_info& mi, mon_attack_desc_info &di)
 {
     // Spectral weapons use the wielder's stats to attack, so displaying
     // their 'monster' damage here is just misleading.
     // TODO: display the right number without an awful hack
     if (mi.type == MONS_SPECTRAL_WEAPON)
-        return "";
+        return false;
 
-    ostringstream result;
-    mon_attack_desc_info di;
     di.special_flavour = SPWPN_NORMAL;
 
     if (mi.props.exists(SPECIAL_WEAPON_KEY))
@@ -5644,11 +5652,7 @@ static string _monster_attacks_description(const monster_info& mi)
     _check_attack_counts_and_flavours(mi, di);
 
     if (di.attack_counts.empty())
-        return "";
-
-    _describe_mons_to_hit(mi, result);
-
-    result << "\n";
+        return false;
 
     // Assign minimum column widths according to the lengths of their headers.
     di.attk_desc_width = di.plural ? 7 : 6;         // "Attack"/"Attacks"
@@ -5680,6 +5684,30 @@ static string _monster_attacks_description(const monster_info& mi)
 
     // Check for throwing weapons
     _attacks_table_row_throwing(mi, di);
+    return true;
+}
+
+// The rows of the table of attacks in the monster's description.
+vector<monster_attack_row> monster_attack_rows(const monster_info& mi)
+{
+    mon_attack_desc_info di;
+    if (!_gather_attacks(mi, di))
+        return {};
+    return di.rows;
+}
+
+// Get a description of the monster's to-hit, the player's to-hit against
+// the monster, and a table of attacks, for the monster description.
+static string _monster_attacks_description(const monster_info& mi)
+{
+    ostringstream result;
+    mon_attack_desc_info di;
+    if (!_gather_attacks(mi, di))
+        return "";
+
+    _describe_mons_to_hit(mi, result);
+
+    result << "\n";
 
     // Use all the gathered information in `di` to build the table
     _build_table_of_attacks(di, result);
@@ -5855,15 +5883,15 @@ static bool _visible_to(const monster_info& mi)
 }
 
 /**
- * Display the % chance of a the given monster hitting the player.
+ * The % chance of a the given monster hitting the player.
  *
  * @param mi[in]            Player-visible info about the monster in question.
- * @param result[in,out]    The stringstream to append to.
+ * @return                  The chance, or -1 outside a game.
  */
-static void _describe_mons_to_hit(const monster_info& mi, ostringstream &result)
+int monster_hit_chance(const monster_info& mi)
 {
     if (crawl_state.game_is_arena() || !crawl_state.need_save)
-        return;
+        return -1;
 
     const item_def* weapon = mi.inv[MSLOT_WEAPON].get();
     const bool melee = weapon == nullptr || !is_range_weapon(*weapon);
@@ -5904,7 +5932,21 @@ static void _describe_mons_to_hit(const monster_info& mi, ostringstream &result)
     // ignore penalty for unseen attacker, as with EV above
     const int beat_sh_chance = mon_beat_sh_pct(shield_bypass, scaled_sh);
 
-    const int hit_chance = beat_ev_chance * beat_sh_chance / 100;
+    return beat_ev_chance * beat_sh_chance / 100;
+}
+
+/**
+ * Display the % chance of a the given monster hitting the player.
+ *
+ * @param mi[in]            Player-visible info about the monster in question.
+ * @param result[in,out]    The stringstream to append to.
+ */
+static void _describe_mons_to_hit(const monster_info& mi, ostringstream &result)
+{
+    const int hit_chance = monster_hit_chance(mi);
+    if (hit_chance < 0)
+        return;
+
     result << uppercase_first(mi.pronoun(PRONOUN_SUBJECTIVE)) << " "
            << conjugate_verb("have", mi.pronoun_plurality())
            << " about " << hit_chance << "% to hit you.\n";

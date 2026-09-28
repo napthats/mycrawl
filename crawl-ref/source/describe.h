@@ -107,6 +107,20 @@ void describe_to_hit(const monster_info& mi, ostringstream &result,
                      const item_def* weapon = nullptr, bool verbose = false,
                      attack *source = nullptr, int distance = 0);
 
+// One row of the table of attacks in a monster's description.
+struct monster_attack_row
+{
+    string attack;      // the "Attacks" column without the "2x "
+    int count;          // how many times it hits ("2x", "each")
+    bool ranged;        // a Shoot or Throw row
+    int max_damage;     // with effects such as berserk
+    int base_damage;    // without them ("52 (base 40)")
+    string damage;      // the "Max Damage" column as shown
+    string bonus;       // the "Bonus" / "After Damaging Hits" column
+};
+vector<monster_attack_row> monster_attack_rows(const monster_info &mi);
+int monster_hit_chance(const monster_info &mi);
+
 void describe_hit_chance(int hit_chance, ostringstream &result,
                          const item_def *weapon,
                          bool verbose = false, int distance_from = 0);

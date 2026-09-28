@@ -26,6 +26,7 @@
 #include "cio.h"
 #include "cloud.h"
 #include "coordit.h"
+#include "describe.h"
 #include "describe-spells.h"
 #include "directn.h"
 #include "env.h"
@@ -370,8 +371,32 @@ static JsonNode *_monster_spells_json(const monster_info &mi)
     return books;
 }
 
+// A monster's attacks, as the table in its description (x, v) shows them.
+// max_damage is with effects such as berserk; base_damage, only if it
+// differs, without them.
+static JsonNode *_monster_attacks_json(const vector<monster_attack_row> &rows)
+{
+    JsonNode *a = json_mkarray();
+    for (const monster_attack_row &row : rows)
+    {
+        JsonNode *at = json_mkobject();
+        _add(at, "attack", row.attack);
+        _add(at, "count", (double)row.count);
+        _add(at, "max_damage", (double)row.max_damage);
+        if (row.base_damage != row.max_damage)
+            _add(at, "base_damage", (double)row.base_damage);
+        _add(at, "damage", row.damage);
+        if (!row.bonus.empty())
+            _add(at, "bonus", row.bonus);
+        if (row.ranged)
+            _add(at, "ranged", true);
+        json_append_element(a, at);
+    }
+    return a;
+}
+
 // Monsters that are shown on the map, in view or detected. With spells
-// only for the live API, to keep the records small.
+// and attacks only for the live API, to keep the records small.
 static JsonNode *_monsters_json(bool spells = false)
 {
     JsonNode *a = json_mkarray();
@@ -392,6 +417,17 @@ static JsonNode *_monsters_json(bool spells = false)
         _add(m, "in_view", you.see_cell(*ri));
         if (spells && mi->has_spells())
             _add(m, "spells", _monster_spells_json(*mi));
+        if (spells)
+        {
+            const vector<monster_attack_row> rows = monster_attack_rows(*mi);
+            if (!rows.empty())
+            {
+                _add(m, "attacks", _monster_attacks_json(rows));
+                const int hit = monster_hit_chance(*mi);
+                if (hit >= 0)
+                    _add(m, "hit_chance", (double)hit);
+            }
+        }
         json_append_element(a, m);
     }
     return a;
