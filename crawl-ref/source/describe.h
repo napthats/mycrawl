@@ -103,9 +103,9 @@ void describe_skill(skill_type skill);
 
 int hex_chance(const spell_type spell, const monster_info* mon_owner,
                bool is_wand = false);
-void describe_to_hit(const monster_info& mi, ostringstream &result,
-                     const item_def* weapon = nullptr, bool verbose = false,
-                     attack *source = nullptr, int distance = 0);
+int describe_to_hit(const monster_info& mi, ostringstream &result,
+                    const item_def* weapon = nullptr, bool verbose = false,
+                    attack *source = nullptr, int distance = 0);
 
 // One row of the table of attacks in a monster's description.
 struct monster_attack_row
@@ -120,6 +120,12 @@ struct monster_attack_row
 };
 vector<monster_attack_row> monster_attack_rows(const monster_info &mi);
 int monster_hit_chance(const monster_info &mi);
+
+// Other parts of a monster's description, for gameio.
+string player_to_hit_description(const monster_info &mi, int &chance);
+int monster_notice_chance(const monster_info &mi);
+vector<pair<string, int>> monster_resists_shown(const monster_info &mi);
+string monster_property_description(const monster_info &mi);
 
 void describe_hit_chance(int hit_chance, ostringstream &result,
                          const item_def *weapon,

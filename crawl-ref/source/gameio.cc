@@ -42,6 +42,7 @@
 #include "macro.h"
 #include "menu.h"
 #include "message.h"
+#include "mon-explode.h"
 #include "mon-info.h"
 #include "mon-util.h"
 #include "newgame-def.h"
@@ -405,8 +406,73 @@ static JsonNode *_monster_attacks_json(const vector<monster_attack_row> &rows)
     return a;
 }
 
-// Monsters that are shown on the map, in view or detected. With spells
-// and attacks only for the live API, to keep the records small.
+// The pips of a bar in a monster's description ("++" is 2).
+static int _pips(int value, int scale)
+{
+    return max(0, (value + scale - 1) / scale);
+}
+
+// A monster's stats, as the rest of its description (x, v) shows them: the
+// table above the attacks, your chance to hit it, its chance to notice you,
+// and the lines below the attacks (resistances not in the table, movement,
+// explosions...). Bars (will, ac, ev, sh) as their pips; resistances as
+// levels, 3 being immunity and -1 susceptibility.
+static JsonNode *_monster_stats_json(const monster_info &mi)
+{
+    JsonNode *s = json_mkobject();
+    _add(s, "max_hp", (double)mi.get_known_max_hp());
+    _add(s, "max_hp_text", mi.get_max_hp_desc());
+    const int will = mi.willpower();
+    if (will == WILL_INVULN)
+        _add(s, "will", "inf");
+    else
+        _add(s, "will", (double)_pips(will, WL_PIP));
+    _add(s, "ac", (double)_pips(mi.ac, 5));
+    _add(s, "ev", (double)_pips(mi.base_ev, 5));
+    _add(s, "sh", (double)_pips(mi.sh / 2, 5));
+    JsonNode *res = json_mkobject();
+    for (const pair<string, int> &r : monster_resists_shown(mi))
+        _add(res, r.first.c_str(), (double)r.second);
+    _add(s, "resists", res);
+    _add(s, "class", single_holiness_description(mons_class_holiness(mi.type)));
+    _add(s, "size", get_size_adj(mi.body_size()));
+    _add(s, "int", intelligence_description(mi.intel()));
+    // Shown only when it isn't the usual slow regeneration.
+    if (mi.is(MB_SICK) || mi.is(MB_NO_REGEN))
+        _add(s, "regen", 0.0);
+    else if (mons_class_fast_regen(mi.type) || mi.is(MB_REGENERATION))
+        _add(s, "regen", (double)mi.regen_rate(1));
+    _add(s, "speed", (double)(mi.base_speed() * 10));
+    const string speed = mi.speed_description();
+    if (!speed.empty())
+        _add(s, "speed_text", speed);
+    int to_hit;
+    const string to_hit_text = player_to_hit_description(mi, to_hit);
+    if (to_hit >= 0)
+    {
+        _add(s, "to_hit", (double)to_hit);
+        _add(s, "to_hit_text", trimmed_string(to_hit_text));
+    }
+    const int notice = monster_notice_chance(mi);
+    if (notice >= 0)
+        _add(s, "notice_chance", (double)notice);
+    if (mon_explodes_on_death(mi.type) && mi.type != MONS_LURKING_HORROR)
+    {
+        const dice_def dam = mon_explode_dam(mi.type, mi.hd);
+        JsonNode *ex = json_mkobject();
+        _add(ex, "damage", make_stringf("%dd%d", dam.num, dam.size));
+        _add(ex, "max_damage", (double)(dam.num * dam.size));
+        _add(s, "explosion", ex);
+    }
+    vector<string> lines;
+    for (const string &line : split_string("\n", monster_property_description(mi)))
+        lines.push_back(line);
+    _add(s, "text", _strings(lines));
+    return s;
+}
+
+// Monsters that are shown on the map, in view or detected. With spells,
+// attacks and stats only for the live API, to keep the records small.
 static JsonNode *_monsters_json(bool spells = false)
 {
     JsonNode *a = json_mkarray();
@@ -437,6 +503,9 @@ static JsonNode *_monsters_json(bool spells = false)
                 if (hit >= 0)
                     _add(m, "hit_chance", (double)hit);
             }
+            // As the description, none for sensed monsters and projectiles.
+            if (!mons_is_sensed(mi->type) && !mons_is_projectile(mi->type))
+                _add(m, "stats", _monster_stats_json(*mi));
         }
         json_append_element(a, m);
     }

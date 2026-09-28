@@ -5746,23 +5746,41 @@ static string _monster_spells_description(const monster_info& mi, bool mark_spel
     return description.to_colour_string();
 }
 
-static string _monster_notice_chance(const monster_info& mi)
+/**
+ * The % chance each turn of the given monster noticing the player, as its
+ * description shows it for hostile monsters that haven't noticed you.
+ *
+ * @param mi[in]            Player-visible info about the monster in question.
+ * @return                  The chance, or -1 if the description doesn't show it.
+ */
+int monster_notice_chance(const monster_info& mi)
 {
-    ostringstream result;
-
-    result << uppercase_first(mi.pronoun(PRONOUN_SUBJECTIVE)) << " "
-           << conjugate_verb("have", mi.pronoun_plurality())
-           << " a ";
+    if (!crawl_state.game_started || mi.attitude != ATT_HOSTILE
+        || !(mi.is(MB_SLEEPING) || mi.is(MB_DORMANT)
+             || mi.is(MB_UNAWARE) || mi.is(MB_WANDERING)))
+    {
+        return -1;
+    }
 
     int perception = mi.perception() * 100;
     int stealth = player_stealth() * 100;
 
     if (stealth < perception)
-        result << 100;
-    else
-        result << perception * 100 / stealth;
+        return 100;
+    return perception * 100 / stealth;
+}
 
-    result << "% chance to notice you each turn.\n";
+static string _monster_notice_chance(const monster_info& mi)
+{
+    const int chance = monster_notice_chance(mi);
+    if (chance < 0)
+        return "";
+
+    ostringstream result;
+
+    result << uppercase_first(mi.pronoun(PRONOUN_SUBJECTIVE)) << " "
+           << conjugate_verb("have", mi.pronoun_plurality())
+           << " a " << chance << "% chance to notice you each turn.\n";
 
     return result.str();
 }
@@ -5797,15 +5815,17 @@ static void _describe_aux_hit_chance(ostringstream &result, vector<string>& auxe
  *                          one will be created if not provided.
  * @param distance          Distance from which the attack is being made. If not
  *                          provided, assume distance between player and the target.
+ * @return                  The chance described (with the weapon), or -1 if
+ *                          none is.
  */
-void describe_to_hit(const monster_info &mi, ostringstream &result,
-                     const item_def *weapon, bool verbose, attack *source,
-                     int distance)
+int describe_to_hit(const monster_info &mi, ostringstream &result,
+                    const item_def *weapon, bool verbose, attack *source,
+                    int distance)
 {
     if (weapon != nullptr
         && !(is_weapon(*weapon) || is_throwable(&you, *weapon)))
     {
-        return; // breadwielding
+        return -1; // breadwielding
     }
 
     const bool melee = weapon == nullptr || !(is_range_weapon(*weapon)
@@ -5829,11 +5849,11 @@ void describe_to_hit(const monster_info &mi, ostringstream &result,
         vector<string> aux_names = get_player_aux_names();
         if (!aux_names.empty())
         {
-            acc_pct = to_hit_pct_aux(mi, attk);
-            _describe_aux_hit_chance(result, aux_names, acc_pct);
+            const int aux_pct = to_hit_pct_aux(mi, attk);
+            _describe_aux_hit_chance(result, aux_names, aux_pct);
         }
 
-        return;
+        return acc_pct;
     }
     else
     {
@@ -5843,6 +5863,7 @@ void describe_to_hit(const monster_info &mi, ostringstream &result,
     }
 
     describe_hit_chance(acc_pct, result, weapon, verbose, distance_from);
+    return acc_pct;
 }
 
 /**
@@ -6271,8 +6292,66 @@ static string _res_name(mon_resist_flags res)
     case MR_RES_ELEC:   return "rElec";
     case MR_RES_NEG:    return "rNeg";
     case MR_RES_CORR:   return "rCorr";
+    case MR_RES_STEAM:  return "rSteam";
+    case MR_RES_DAMNATION: return "rDamn";
+    case MR_RES_MIASMA: return "rMiasma";
+    case MR_RES_TORMENT: return "rTorment";
     default:            return "rEggplant";
     }
+}
+
+static const mon_resist_flags table_resists[] =
+    { MR_RES_FIRE, MR_RES_COLD, MR_RES_POISON, MR_RES_NEG, MR_RES_ELEC };
+
+static bool _is_table_resist(mon_resist_flags res)
+{
+    return find(begin(table_resists), end(table_resists), res)
+           != end(table_resists);
+}
+
+// The level of a resistance as a monster's description shows it: those in
+// the table as pips (3 shown as immunity), the rest in the lines below it
+// from -1 (susceptible) to 3 (immune).
+static int _shown_resist_level(resists_t resist_set, mon_resist_flags res)
+{
+    const int level = get_resist(resist_set, res);
+    if (_is_table_resist(res))
+    {
+        if (level == 3)
+            return level;
+        const int top = (res == MR_RES_POISON || res == MR_RES_ELEC) ? 1 : 3; // lies
+        return min(max(level, -top), top);
+    }
+    if (level && (res == MR_RES_DAMNATION || res == MR_RES_TORMENT))
+        return 3; // one level is immunity
+    return min(max(level, -1), 3);
+}
+
+/**
+ * The resistances a monster's description shows, other than 0.
+ *
+ * @param mi[in]            Player-visible info about the monster in question.
+ * @return                  (name, level) pairs, named as in the table (rF,
+ *                          rC, rPois, rNeg, rElec) or likewise (rCorr,
+ *                          rSteam, rDamn, rMiasma, rTorment). 3 is immunity.
+ */
+vector<pair<string, int>> monster_resists_shown(const monster_info& mi)
+{
+    const mon_resist_flags all_resists[] =
+    {
+        MR_RES_FIRE, MR_RES_COLD, MR_RES_POISON, MR_RES_NEG, MR_RES_ELEC,
+        MR_RES_CORR, MR_RES_STEAM, MR_RES_DAMNATION, MR_RES_MIASMA,
+        MR_RES_TORMENT,
+    };
+    const resists_t resist = mi.resists();
+    vector<pair<string, int>> shown;
+    for (mon_resist_flags rflags : all_resists)
+    {
+        const int level = _shown_resist_level(resist, rflags);
+        if (level)
+            shown.emplace_back(_res_name(rflags), level);
+    }
+    return shown;
 }
 
 static void _desc_mon_resist(TablePrinter &pr,
@@ -6286,18 +6365,15 @@ static void _desc_mon_resist(TablePrinter &pr,
 
 static void _add_resist_desc(TablePrinter &pr, resists_t resist_set)
 {
-    const mon_resist_flags common_resists[] =
-        { MR_RES_FIRE, MR_RES_COLD, MR_RES_POISON, MR_RES_NEG, MR_RES_ELEC };
-
     bool found = false;
-    for (mon_resist_flags rflags : common_resists)
+    for (mon_resist_flags rflags : table_resists)
         if (get_resist(resist_set, rflags))
             found = true;
     if (!found)
         return;
 
     pr.AddRow();
-    for (mon_resist_flags rflags : common_resists)
+    for (mon_resist_flags rflags : table_resists)
         _desc_mon_resist(pr, resist_set, rflags);
 }
 
@@ -6310,73 +6386,41 @@ static void _desc_mon_death_explosion(ostringstream &result,
     result << "Explosion damage: " << dam.num << "d" << dam.size << "\n";
 }
 
-// Describe a monster's (intrinsic) resistances, speed and a few other
-// attributes.
-static string _monster_stat_description(const monster_info& mi, bool mark_spells)
+/**
+ * The line in a monster's description telling your chance to hit it.
+ *
+ * @param mi[in]            Player-visible info about the monster in question.
+ * @param chance[out]       The chance with your weapon, or -1 if none is shown.
+ * @return                  The line ("You have about 80% to hit it ..."),
+ *                          or "" outside a game.
+ */
+string player_to_hit_description(const monster_info& mi, int &chance)
 {
-    if (mons_is_sensed(mi.type) || mons_is_projectile(mi.type))
+    chance = -1;
+    if (!crawl_state.game_started)
         return "";
 
     ostringstream result;
+    result << "You have ";
+    chance = describe_to_hit(mi, result, you.weapon(), true);
+    if (mi.incapacitated()) // Affects ev and sh
+        result << " (while incapacitated)";
+    else if (mi.base_ev != mi.ev)
+        result << " (at present)";
+    result << ".\n";
+    return result.str();
+}
 
-    TablePrinter pr;
-
-    pr.AddRow();
-    pr.AddCell("Max HP", mi.get_max_hp_desc());
-    pr.AddCell("Will", _describe_monster_wl(mi));
-    pr.AddCell("AC", _build_bar(mi.ac, 5));
-    pr.AddCell("EV", _build_bar(mi.base_ev, 5));
-    if (mi.sh / 2 > 0)  // rescale to match player SH
-        pr.AddCell("SH", _build_bar(mi.sh / 2, 5));
-    else
-        pr.AddCell(); // ensure alignment
-
+/**
+ * The lines in a monster's description between its attacks and its spells:
+ * resistances not in the table, movement, explosions and so on.
+ *
+ * @param mi[in]            Player-visible info about the monster in question.
+ */
+string monster_property_description(const monster_info& mi)
+{
+    ostringstream result;
     const resists_t resist = mi.resists();
-    _add_resist_desc(pr, resist);
-
-    // Less important common properties. Arguably should be lower down.
-    const size_type sz = mi.body_size();
-    const string size_desc = sz == SIZE_LITTLE ? "V. Small" : uppercase_first(get_size_adj(sz));
-    const auto holiness = mons_class_holiness(mi.type);
-    const string holi = holiness == MH_NONLIVING ? "Nonliv."
-                                                 : single_holiness_description(holiness);
-    pr.AddRow();
-    if (mi.threat != MTHRT_UNDEF && !mons_class_is_peripheral(mi.type))
-        pr.AddCell("Threat", _get_threat_desc(mi.threat));
-    else // ?/m
-        pr.AddCell(); // ensure alignment
-    pr.AddCell("Class", uppercase_first(holi).c_str());
-    pr.AddCell("Size", size_desc.c_str());
-    pr.AddCell("Int", intelligence_description(mi.intel()));
-    if (mi.is(MB_SICK) || mi.is(MB_NO_REGEN))
-        pr.AddCell("Regen", "None");
-    else if (mons_class_fast_regen(mi.type) || mi.is(MB_REGENERATION))
-        pr.AddCell("Regen", make_stringf("%d/turn", mi.regen_rate(1)));
-                                        // (Wait, what's a 'turn'?)
-
-    pr.Print(result);
-
-    result << mi.speed_description() << "\n\n";
-
-    if (crawl_state.game_started)
-    {
-        result << "You have ";
-        describe_to_hit(mi, result, you.weapon(), true);
-        if (mi.incapacitated()) // Affects ev and sh
-            result << " (while incapacitated)";
-        else if (mi.base_ev != mi.ev)
-            result << " (at present)";
-        result << ".\n";
-    }
-    result << _monster_attacks_description(mi);
-    if (crawl_state.game_started)
-    {
-        if (mi.attitude == ATT_HOSTILE && (mi.is(MB_SLEEPING) || mi.is(MB_DORMANT)
-        || mi.is(MB_UNAWARE) || mi.is(MB_WANDERING)))
-        {
-            result << _monster_notice_chance(mi);
-        }
-    }
 
     const mon_resist_flags special_resists[] =
     {
@@ -6391,15 +6435,11 @@ static string _monster_stat_description(const monster_info& mi, bool mark_spells
 
     for (mon_resist_flags rflags : special_resists)
     {
-        int level = get_resist(resist, rflags);
+        const int level = _shown_resist_level(resist, rflags);
 
         if (level != 0)
         {
             const char* attackname = _get_resist_name(rflags);
-            if (rflags == MR_RES_DAMNATION || rflags == MR_RES_TORMENT)
-                level = 3; // one level is immunity
-            level = max(level, -1);
-            level = min(level,  3);
             switch (level)
             {
                 case -1:
@@ -6622,6 +6662,62 @@ static string _monster_stat_description(const monster_info& mi, bool mark_spells
     else if (mons_class_flag(mi.type, M_EAT_DOORS))
         result << uppercase_first(pronoun) << " can eat doors.\n";
 
+    return result.str();
+}
+
+// Describe a monster's (intrinsic) resistances, speed and a few other
+// attributes.
+static string _monster_stat_description(const monster_info& mi, bool mark_spells)
+{
+    if (mons_is_sensed(mi.type) || mons_is_projectile(mi.type))
+        return "";
+
+    ostringstream result;
+
+    TablePrinter pr;
+
+    pr.AddRow();
+    pr.AddCell("Max HP", mi.get_max_hp_desc());
+    pr.AddCell("Will", _describe_monster_wl(mi));
+    pr.AddCell("AC", _build_bar(mi.ac, 5));
+    pr.AddCell("EV", _build_bar(mi.base_ev, 5));
+    if (mi.sh / 2 > 0)  // rescale to match player SH
+        pr.AddCell("SH", _build_bar(mi.sh / 2, 5));
+    else
+        pr.AddCell(); // ensure alignment
+
+    const resists_t resist = mi.resists();
+    _add_resist_desc(pr, resist);
+
+    // Less important common properties. Arguably should be lower down.
+    const size_type sz = mi.body_size();
+    const string size_desc = sz == SIZE_LITTLE ? "V. Small" : uppercase_first(get_size_adj(sz));
+    const auto holiness = mons_class_holiness(mi.type);
+    const string holi = holiness == MH_NONLIVING ? "Nonliv."
+                                                 : single_holiness_description(holiness);
+    pr.AddRow();
+    if (mi.threat != MTHRT_UNDEF && !mons_class_is_peripheral(mi.type))
+        pr.AddCell("Threat", _get_threat_desc(mi.threat));
+    else // ?/m
+        pr.AddCell(); // ensure alignment
+    pr.AddCell("Class", uppercase_first(holi).c_str());
+    pr.AddCell("Size", size_desc.c_str());
+    pr.AddCell("Int", intelligence_description(mi.intel()));
+    if (mi.is(MB_SICK) || mi.is(MB_NO_REGEN))
+        pr.AddCell("Regen", "None");
+    else if (mons_class_fast_regen(mi.type) || mi.is(MB_REGENERATION))
+        pr.AddCell("Regen", make_stringf("%d/turn", mi.regen_rate(1)));
+                                        // (Wait, what's a 'turn'?)
+
+    pr.Print(result);
+
+    result << mi.speed_description() << "\n\n";
+
+    int to_hit;
+    result << player_to_hit_description(mi, to_hit);
+    result << _monster_attacks_description(mi);
+    result << _monster_notice_chance(mi);
+    result << monster_property_description(mi);
     result << _monster_spells_description(mi, mark_spells);
 
     return result.str();
