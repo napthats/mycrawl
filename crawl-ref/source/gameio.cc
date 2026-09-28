@@ -42,6 +42,7 @@
 #include "macro.h"
 #include "menu.h"
 #include "message.h"
+#include "mon-death.h"
 #include "mon-explode.h"
 #include "mon-info.h"
 #include "mon-util.h"
@@ -544,17 +545,21 @@ static JsonNode *_floor_items_json(bool all_known)
 }
 
 // Cells grouped by name, as runs: {"name": ..., <extra>, "runs": [[y, x1,
-// x2], ...]} in the order the names were first seen.
+// x2], ...]} in the order the names were first seen. The extras are a glyph
+// (that of the first cell) and whether harmful (cells differing in it are
+// grouped apart; -1 for none).
 class cell_runs
 {
 public:
-    void add(const string &name, const coord_def &p, const string &glyph = "")
+    void add(const string &name, const coord_def &p, const string &glyph = "",
+             int harmful = -1)
     {
-        auto it = m_index.find(name);
+        const pair<string, int> key(name, harmful);
+        auto it = m_index.find(key);
         if (it == m_index.end())
         {
-            it = m_index.emplace(name, m_groups.size()).first;
-            m_groups.push_back({ name, glyph, {} });
+            it = m_index.emplace(key, m_groups.size()).first;
+            m_groups.push_back({ name, glyph, harmful, {} });
         }
         vector<array<int, 3>> &runs = m_groups[it->second].runs;
         if (!runs.empty() && runs.back()[0] == p.y && runs.back()[2] == p.x - 1)
@@ -572,6 +577,8 @@ public:
             _add(o, "name", g.name);
             if (!g.glyph.empty())
                 _add(o, "glyph", g.glyph);
+            if (g.harmful >= 0)
+                _add(o, "harmful", g.harmful > 0);
             JsonNode *runs = json_mkarray();
             for (const array<int, 3> &r : g.runs)
             {
@@ -591,9 +598,10 @@ private:
     {
         string name;
         string glyph;
+        int harmful;
         vector<array<int, 3>> runs;
     };
-    map<string, size_t> m_index;
+    map<pair<string, int>, size_t> m_index;
     vector<group> m_groups;
 };
 
@@ -664,7 +672,9 @@ static JsonNode *_terrain_json()
     return t;
 }
 
-// Clouds shown on the map, remembered ones marked as such.
+// Clouds shown on the map, remembered ones marked as such. harmful: whether
+// the cloud would harm you as you are now (with your resistances, including
+// temporary ones): the clouds travel avoids and moving into asks about.
 static JsonNode *_clouds_json()
 {
     cell_runs runs;
@@ -676,7 +686,9 @@ static JsonNode *_clouds_json()
         string name = cloud_type_name(cloud->type, false);
         if (!you.see_cell(*ri))
             name += " (remembered)";
-        runs.add(name, *ri);
+        const bool harmful = is_damaging_cloud(cloud->type, true,
+                                               YOU_KILL(cloud->killer));
+        runs.add(name, *ri, "", harmful);
     }
     return runs.json();
 }
