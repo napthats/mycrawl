@@ -5534,7 +5534,8 @@ static void _attacks_table_row(const monster_info &mi, mon_attack_desc_info &di,
     di.bonus_width = max(di.bonus_width, bonus_desc.size());
 
     di.rows.push_back({attk_name + weapon_descriptor, max(attk_mult, 1),
-                       ranged, real_dam, dam, final_dam_str, bonus_desc});
+                       ranged, real_dam, dam, final_dam_str, bonus_desc,
+                       false, -1});
 }
 
 // Get all the info required to form an attacks table row for the monster's
@@ -5615,7 +5616,7 @@ static void _attacks_table_row_throwing(const monster_info &mi,
     di.bonus_width = max(di.bonus_width, bonus_desc.size());
 
     di.rows.push_back({throw_str, 1, true, max_dam, max_dam, dam_desc,
-                       bonus_desc});
+                       bonus_desc, false, -1});
 }
 
 // Build the table of attacks, for real
@@ -5726,6 +5727,39 @@ vector<monster_attack_row> monster_attack_rows(const monster_info& mi)
     if (!_gather_attacks(mi, di))
         return {};
     return di.rows;
+}
+
+// The Shoot rows that the table of attacks would have if the monster wielded
+// the launcher it carries ("carrying a +0 longbow"), as it does before
+// shooting, with the chance to hit with it. None if it wields two weapons or
+// already a launcher.
+vector<monster_attack_row> monster_carried_launcher_rows(const monster_info& mi)
+{
+    const item_def* weapon = mi.inv[MSLOT_WEAPON].get();
+    const item_def* alt = mi.inv[MSLOT_ALT_WEAPON].get();
+    if (!alt || !is_range_weapon(*alt) || weapon && is_range_weapon(*weapon)
+        || mi.wields_two_weapons())
+    {
+        return {};
+    }
+
+    monster_info wielding(mi);
+    swap(wielding.inv[MSLOT_WEAPON], wielding.inv[MSLOT_ALT_WEAPON]);
+    mon_attack_desc_info di;
+    if (!_gather_attacks(wielding, di))
+        return {};
+    const int hit_chance = monster_hit_chance(wielding);
+
+    vector<monster_attack_row> rows;
+    for (monster_attack_row &row : di.rows)
+    {
+        if (!row.ranged || !starts_with(row.attack, "Shoot"))
+            continue;
+        row.carried = true;
+        row.hit_chance = hit_chance;
+        rows.push_back(row);
+    }
+    return rows;
 }
 
 // Get a description of the monster's to-hit, the player's to-hit against

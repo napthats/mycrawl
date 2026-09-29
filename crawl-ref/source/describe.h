@@ -117,8 +117,11 @@ struct monster_attack_row
     int base_damage;    // without them ("52 (base 40)")
     string damage;      // the "Max Damage" column as shown
     string bonus;       // the "Bonus" / "After Damaging Hits" column
+    bool carried;       // with a launcher it carries, not wields
+    int hit_chance;     // of a carried row: monster_hit_chance() with it
 };
 vector<monster_attack_row> monster_attack_rows(const monster_info &mi);
+vector<monster_attack_row> monster_carried_launcher_rows(const monster_info &mi);
 int monster_hit_chance(const monster_info &mi);
 
 // Other parts of a monster's description, for gameio.

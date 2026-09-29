@@ -504,6 +504,12 @@ static JsonNode *_monster_attacks_json(const vector<monster_attack_row> &rows)
             _add(at, "bonus", row.bonus);
         if (row.ranged)
             _add(at, "ranged", true);
+        if (row.carried)
+        {
+            _add(at, "carried", true);
+            if (row.hit_chance >= 0)
+                _add(at, "hit_chance", (double)row.hit_chance);
+        }
         json_append_element(a, at);
     }
     return a;
@@ -579,9 +585,11 @@ static void _add_monster_details(JsonNode *m, const monster_info &mi)
 {
     if (mi.has_spells())
         _add(m, "spells", _monster_spells_json(mi));
-    const vector<monster_attack_row> rows = monster_attack_rows(mi);
+    vector<monster_attack_row> rows = monster_attack_rows(mi);
     if (!rows.empty())
     {
+        for (const monster_attack_row &row : monster_carried_launcher_rows(mi))
+            rows.push_back(row);
         _add(m, "attacks", _monster_attacks_json(rows));
         const int hit = monster_hit_chance(mi);
         if (hit >= 0)
