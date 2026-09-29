@@ -588,7 +588,7 @@ static void _add_monster_details(JsonNode *m, const monster_info &mi)
     vector<monster_attack_row> rows = monster_attack_rows(mi);
     if (!rows.empty())
     {
-        for (const monster_attack_row &row : monster_carried_launcher_rows(mi))
+        for (const monster_attack_row &row : monster_carried_weapon_rows(mi))
             rows.push_back(row);
         _add(m, "attacks", _monster_attacks_json(rows));
         const int hit = monster_hit_chance(mi);

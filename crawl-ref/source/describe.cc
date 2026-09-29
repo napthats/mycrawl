@@ -5729,19 +5729,21 @@ vector<monster_attack_row> monster_attack_rows(const monster_info& mi)
     return di.rows;
 }
 
-// The Shoot rows that the table of attacks would have if the monster wielded
-// the launcher it carries ("carrying a +0 longbow"), as it does before
-// shooting, with the chance to hit with it. None if it wields two weapons or
-// already a launcher.
-vector<monster_attack_row> monster_carried_launcher_rows(const monster_info& mi)
+// The rows that the table of attacks would have with the weapon the monster
+// carries ("carrying a +0 longbow") in place of the one it wields: the Shoot
+// rows of a launcher it carries while wielding a melee weapon, as it swaps
+// before shooting, or the rows of a melee weapon it carries while wielding a
+// launcher, as it swaps before hitting in melee (monster::wield_melee_weapon).
+// Each with the chance to hit with that weapon. None if it wields two weapons.
+vector<monster_attack_row> monster_carried_weapon_rows(const monster_info& mi)
 {
     const item_def* weapon = mi.inv[MSLOT_WEAPON].get();
     const item_def* alt = mi.inv[MSLOT_ALT_WEAPON].get();
-    if (!alt || !is_range_weapon(*alt) || weapon && is_range_weapon(*weapon)
-        || mi.wields_two_weapons())
-    {
+    if (!alt || !is_weapon(*alt) || mi.wields_two_weapons())
         return {};
-    }
+    const bool launcher = is_range_weapon(*alt);
+    if (weapon && is_range_weapon(*weapon) == launcher)
+        return {};
 
     monster_info wielding(mi);
     swap(wielding.inv[MSLOT_WEAPON], wielding.inv[MSLOT_ALT_WEAPON]);
@@ -5749,12 +5751,16 @@ vector<monster_attack_row> monster_carried_launcher_rows(const monster_info& mi)
     if (!_gather_attacks(wielding, di))
         return {};
     const int hit_chance = monster_hit_chance(wielding);
+    const string weapon_descriptor = ": " + alt->name(DESC_PLAIN, true, true, false);
 
     vector<monster_attack_row> rows;
     for (monster_attack_row &row : di.rows)
     {
-        if (!row.ranged || !starts_with(row.attack, "Shoot"))
+        if (launcher ? !row.ranged || !starts_with(row.attack, "Shoot")
+                     : row.ranged || !ends_with(row.attack, weapon_descriptor))
+        {
             continue;
+        }
         row.carried = true;
         row.hit_chance = hit_chance;
         rows.push_back(row);
