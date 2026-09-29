@@ -429,6 +429,15 @@ static JsonNode *_player_json()
     _add(p, "runes", _strings(runes));
     if (player_has_orb())
         _add(p, "orb", true);
+    // The orbs guarding Zot, once a Zot statue has shown them (as the
+    // overview, Ctrl-O, tells): "fire", "winter" or "entropy".
+    if (you.zot_orb_monster_known)
+    {
+        string orb = mons_type_name(you.zot_orb_monster, DESC_DBNAME);
+        if (starts_with(orb, "orb of "))
+            orb.erase(0, strlen("orb of "));
+        _add(p, "zot_orb", orb);
+    }
     // The skill menu's auto/manual training.
     _add(p, "training", you.auto_training ? "auto" : "manual");
     return p;
