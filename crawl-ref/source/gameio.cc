@@ -1811,6 +1811,9 @@ void after_options_read()
     Options.game.species = (species_type)rp.species;
     Options.game.job = (job_type)rp.job;
     Options.game.weapon = (weapon_type)rp.weapon;
+    // The weapon option (e.g. one the background doesn't offer, which made
+    // the game ask) would win over the recorded weapon.
+    Options.game.allowed_weapons.clear();
     Options.game.map = rp.map;
     Options.game.fully_random = false;
     Options.seed = Options.seed_from_rc = custom_seed ? rp.seed : 0;
