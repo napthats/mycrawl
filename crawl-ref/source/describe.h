@@ -127,6 +127,22 @@ int monster_notice_chance(const monster_info &mi);
 vector<pair<string, int>> monster_resists_shown(const monster_info &mi);
 string monster_property_description(const monster_info &mi);
 
+// The numbers in the description of a weapon or a throwing weapon, for
+// gameio. Delays in aut (the description shows tenths of turns).
+struct weapon_desc_stats
+{
+    bool thrown;
+    int base_accuracy;     // not shown for throwing weapons
+    int base_damage;
+    int base_delay;
+    int min_delay;
+    int min_delay_skill;   // the skill level min_delay is reached at
+    int attack_delay;      // "Current attack delay"
+    int damage_rating;
+    string damage_rating_text;
+};
+bool player_weapon_stats(const item_def &item, weapon_desc_stats &stats);
+
 void describe_hit_chance(int hit_chance, ostringstream &result,
                          const item_def *weapon,
                          bool verbose = false, int distance_from = 0);

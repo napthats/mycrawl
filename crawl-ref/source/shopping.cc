@@ -26,6 +26,7 @@
 #include "item-prop.h"
 #include "item-status-flag-type.h"
 #include "items.h"
+#include "json.h"
 #include "libutil.h"
 #include "menu.h"
 #include "message.h"
@@ -1033,6 +1034,11 @@ class ShopEntry : public InvEntry
             shopping_list.del_thing(*item, &menu.pos);
 
         InvEntry::select(qty);
+    }
+
+    void gameio_fields(JsonNode *entry) const override
+    {
+        json_append_member(entry, "price", json_mknumber(cost));
     }
 public:
     ShopEntry(const item_def& i, ShopMenu& m)

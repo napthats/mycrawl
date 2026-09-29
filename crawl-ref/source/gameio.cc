@@ -13,6 +13,7 @@
 #include <climits>
 #include <deque>
 #include <map>
+#include <set>
 #include <thread>
 #ifdef TARGET_OS_WINDOWS
 # include <process.h>
@@ -28,6 +29,7 @@
 #include "coordit.h"
 #include "describe.h"
 #include "describe-spells.h"
+#include "dgn-overview.h"
 #include "directn.h"
 #include "env.h"
 #include "files.h"
@@ -49,6 +51,7 @@
 #include "newgame-def.h"
 #include "options.h"
 #include "outer-menu.h"
+#include "output.h"
 #include "precision-menu.h"
 #include "player.h"
 #include "prompt.h"
@@ -204,6 +207,42 @@ static string _exit_name(game_exit exit)
 }
 
 /////////////////////////////////////////////////////////////////////////////
+// Your actions (world_reacts()) in each command, counted between the
+// command prompts.
+
+struct turn_counter
+{
+    int waits = 0;        // command prompts so far
+    int counted_at = -1;  // the prompt count that count and time are of
+    int count = 0;
+    int time = 0;         // the time the last action took
+    // For the last command, as of the latest prompt.
+    int shown_count = 0;
+    int shown_time = 0;
+};
+
+static turn_counter turns;
+
+void on_player_turn(int time_taken)
+{
+    if (turns.counted_at != turns.waits)
+    {
+        turns.counted_at = turns.waits;
+        turns.count = 0;
+    }
+    ++turns.count;
+    turns.time = time_taken;
+}
+
+static void _count_command_wait()
+{
+    const bool acted = turns.counted_at == turns.waits;
+    turns.shown_count = acted ? turns.count : 0;
+    turns.shown_time = acted ? turns.time : 0;
+    ++turns.waits;
+}
+
+/////////////////////////////////////////////////////////////////////////////
 // The visible game state. Only what the player can see on screen: the map
 // as known to the player, monster_info for monsters, and item names as the
 // player knows them.
@@ -290,6 +329,10 @@ static JsonNode *_player_json()
     _add(p, "pos", _pos(you.pos()));
     _add(p, "hp", (double)you.hp);
     _add(p, "hp_max", (double)you.hp_max);
+    // Max HP without draining, which the HP line shows in brackets.
+    const int undrained = get_real_hp(true, false);
+    if (undrained != you.hp_max)
+        _add(p, "hp_max_undrained", (double)undrained);
     _add(p, "mp", (double)you.magic_points);
     _add(p, "mp_max", (double)you.max_magic_points);
     _add(p, "ac", (double)you.armour_class_scaled(1));
@@ -329,6 +372,65 @@ static JsonNode *_player_json()
          quiver::get_secondary_action()->quiver_description().tostring());
     _add(p, "last_action_time",
          (double)(you.elapsed_time - you.elapsed_time_at_last_input));
+    // Your actions in the last command (steps of travel, turns of rest...)
+    // and the time the last of them took.
+    _add(p, "last_actions", (double)turns.shown_count);
+    _add(p, "last_step_time", (double)turns.shown_time);
+
+    // As the overview (%) shows them: resistances as their pips (3 is
+    // immunity to poison, negative a vulnerability; 0 left out), willpower
+    // and stealth as the pips of their bars.
+    const pair<const char *, int> resists[] = {
+        { "rF",    player_res_fire(false) },
+        { "rC",    player_res_cold(false) },
+        { "rNeg",  player_prot_life(false) },
+        { "rPois", player_res_poison(false) },
+        { "rElec", player_res_electricity(false) },
+        { "rCorr", player_res_corrosion(false) },
+        { "SInv",  you.can_see_invisible() ? 1 : 0 },
+    };
+    JsonNode *res = json_mkobject();
+    for (const auto &r : resists)
+        if (r.second)
+            _add(res, r.first, (double)r.second);
+    _add(p, "resists", res);
+    const int will = player_willpower();
+    if (will == WILL_INVULN)
+        _add(p, "will", "inf");
+    else
+        _add(p, "will", (double)min(will / WL_PIP, MAX_WILL_PIPS));
+    _add(p, "stealth", (double)stealth_pips());
+    // Flight, as the colour of its status light tells: for good (species,
+    // equipment, form), for a while, or to keep you out of deep water or
+    // lava.
+    if (you.airborne())
+    {
+        JsonNode *fl = json_mkobject();
+        const bool perm = you.permanent_flight();
+        const bool emergency = you.props.exists(EMERGENCY_FLIGHT_KEY)
+                               && you.props[EMERGENCY_FLIGHT_KEY].get_bool();
+        _add(fl, "source", perm      ? "permanent"
+                         : emergency ? "emergency"
+                                     : "temporary");
+        if (!perm && dur_expiring(DUR_FLIGHT))
+            _add(fl, "expiring", true);
+        _add(p, "flight", fl);
+    }
+    // Doom and contamination (%), as the status panel shows them.
+    _add(p, "doom", (double)you.attribute[ATTR_DOOM]);
+    _add(p, "contam", (double)max(you.magic_contamination > 0 ? 1 : 0,
+                                  you.magic_contamination / 10));
+    // The runes and the Orb, as the overview (%) and the rune list (})
+    // show them.
+    vector<string> runes;
+    for (int i = 0; i < NUM_RUNE_TYPES; i++)
+        if (you.runes[i])
+            runes.emplace_back(rune_type_name(i));
+    _add(p, "runes", _strings(runes));
+    if (player_has_orb())
+        _add(p, "orb", true);
+    // The skill menu's auto/manual training.
+    _add(p, "training", you.auto_training ? "auto" : "manual");
     return p;
 }
 
@@ -472,9 +574,31 @@ static JsonNode *_monster_stats_json(const monster_info &mi)
     return s;
 }
 
-// Monsters that are shown on the map, in view or detected. With spells,
-// attacks and stats only for the live API, to keep the records small.
-static JsonNode *_monsters_json(bool spells = false)
+// A monster's spells, attacks and stats, as its description shows them.
+static void _add_monster_details(JsonNode *m, const monster_info &mi)
+{
+    if (mi.has_spells())
+        _add(m, "spells", _monster_spells_json(mi));
+    const vector<monster_attack_row> rows = monster_attack_rows(mi);
+    if (!rows.empty())
+    {
+        _add(m, "attacks", _monster_attacks_json(rows));
+        const int hit = monster_hit_chance(mi);
+        if (hit >= 0)
+            _add(m, "hit_chance", (double)hit);
+    }
+    // As the description, none for sensed monsters and projectiles.
+    if (!mons_is_sensed(mi.type) && !mons_is_projectile(mi.type))
+        _add(m, "stats", _monster_stats_json(mi));
+}
+
+// Monsters that are shown on the map, in view or detected. The live API
+// has their details (spells, attacks, stats) in each. The records, to stay
+// small, have instead the id of the details ("info"), a hash of them: given
+// the ids written so far, the details not written yet go to new_info as
+// {"id": ..., <details>}.
+static JsonNode *_monsters_json(bool details, JsonNode *new_info = nullptr,
+                                set<string> *written = nullptr)
 {
     JsonNode *a = json_mkarray();
     for (rectangle_iterator ri(0); ri; ++ri)
@@ -492,21 +616,24 @@ static JsonNode *_monsters_json(bool spells = false)
         _add(m, "health", get_damage_level_string(mi->holi, mi->dam));
         _add(m, "attrs", _strings(mi->attributes()));
         _add(m, "in_view", you.see_cell(*ri));
-        if (spells && mi->has_spells())
-            _add(m, "spells", _monster_spells_json(*mi));
-        if (spells)
+        if (details)
+            _add_monster_details(m, *mi);
+        else if (new_info && written)
         {
-            const vector<monster_attack_row> rows = monster_attack_rows(*mi);
-            if (!rows.empty())
+            JsonNode *d = json_mkobject();
+            _add_monster_details(d, *mi);
+            char *enc = json_stringify(d, nullptr);
+            const uint64_t h = _fnv1a(14695981039346656037ULL, enc ? enc : "");
+            free(enc);
+            const string id = make_stringf("%08x", (unsigned)(h & 0xffffffff));
+            _add(m, "info", id);
+            if (written->insert(id).second)
             {
-                _add(m, "attacks", _monster_attacks_json(rows));
-                const int hit = monster_hit_chance(*mi);
-                if (hit >= 0)
-                    _add(m, "hit_chance", (double)hit);
+                json_prepend_member(d, "id", json_mkstring(id));
+                json_append_element(new_info, d);
             }
-            // As the description, none for sensed monsters and projectiles.
-            if (!mons_is_sensed(mi->type) && !mons_is_projectile(mi->type))
-                _add(m, "stats", _monster_stats_json(*mi));
+            else
+                json_delete(d);
         }
         json_append_element(a, m);
     }
@@ -714,6 +841,52 @@ static JsonNode *_inventory_json()
     return a;
 }
 
+// The weapons in the pack, throwing weapons too, with the numbers their
+// descriptions show (delays in turns, as there); while you wield no weapon,
+// unarmed combat as well, whose damage rating the @ screen tells.
+static JsonNode *_weapons_json()
+{
+    JsonNode *a = json_mkarray();
+    for (int i = 0; i < ENDOFPACK; ++i)
+    {
+        const item_def &item = you.inv[i];
+        weapon_desc_stats ws;
+        if (!item.defined() || !player_weapon_stats(item, ws))
+            continue;
+        JsonNode *w = json_mkobject();
+        _add(w, "slot", string(1, (char)item.slot));
+        _add(w, "name", item.name(DESC_INVENTORY_EQUIP));
+        _add(w, "equipped", item_is_equipped(item));
+        if (ws.thrown)
+            _add(w, "thrown", true);
+        else
+            _add(w, "base_accuracy", (double)ws.base_accuracy);
+        _add(w, "base_damage", (double)ws.base_damage);
+        _add(w, "base_delay", ws.base_delay / 10.0);
+        _add(w, "min_delay", ws.min_delay / 10.0);
+        _add(w, "min_delay_skill", (double)ws.min_delay_skill);
+        _add(w, "attack_delay", ws.attack_delay / 10.0);
+        _add(w, "damage_rating", (double)ws.damage_rating);
+        _add(w, "damage_rating_text", ws.damage_rating_text);
+        json_append_element(a, w);
+    }
+    if (!you.weapon() && crawl_state.need_save)
+    {
+        JsonNode *w = json_mkobject();
+        int rating = 0;
+        const string text = damage_rating(nullptr, &rating);
+        _add(w, "name", "unarmed combat");
+        _add(w, "equipped", true);
+        // Rounded down as the @ screen does.
+        const int delay = you.attack_delay().expected();
+        _add(w, "attack_delay", delay / 10.0);
+        _add(w, "damage_rating", (double)rating);
+        _add(w, "damage_rating_text", text);
+        json_append_element(a, w);
+    }
+    return a;
+}
+
 static JsonNode *_spells_json()
 {
     JsonNode *a = json_mkarray();
@@ -743,6 +916,21 @@ static JsonNode *_abilities_json()
         _add(o, "name", ability_name(tal.which));
         _add(o, "cost", make_cost_description(tal.which));
         _add(o, "fail", failure_rate_to_string(tal.fail));
+        json_append_element(a, o);
+    }
+    return a;
+}
+
+// The altars seen, as the overview (Ctrl-O) and altar travel (_) know them.
+static JsonNode *_altars_json()
+{
+    JsonNode *a = json_mkarray();
+    for (const auto &altar : overview_altars())
+    {
+        JsonNode *o = json_mkobject();
+        _add(o, "god", god_name(altar.second));
+        _add(o, "place", altar.first.id.describe());
+        _add(o, "pos", _pos(altar.first.pos));
         json_append_element(a, o);
     }
     return a;
@@ -1211,9 +1399,11 @@ static bool _write_state()
         _add(st, "terrain", _terrain_json());
         _add(st, "clouds", _clouds_json());
         _add(st, "inv", _inventory_json());
+        _add(st, "weapons", _weapons_json());
         _add(st, "spells", _spells_json());
         _add(st, "skills", _skills_json());
         _add(st, "abilities", _abilities_json());
+        _add(st, "altars", _altars_json());
         _add(st, "map", _map_json(_map_rows(), _vis_rows()));
     }
 
@@ -1803,7 +1993,7 @@ static void _replay_command_wait()
             {
                 JsonNode *s = json_mkobject();
                 _add(s, "you", _player_json());
-                _add(s, "mons", _monsters_json());
+                _add(s, "mons", _monsters_json(false));
                 _add(s, "inv", _inventory_json());
                 _add(s, "map", _map_json(rows, _vis_rows()));
                 fprintf(rp.log, "%s\n", _encode(s).c_str());
@@ -1899,6 +2089,9 @@ struct record_state
     vector<string> last_rows;
     vector<string> last_vis;
     string last_inv, last_spells, last_skills, last_terrain, last_clouds;
+    string last_weapons, last_abilities, last_altars;
+    // The ids of the monster details (mon_info) written in this session.
+    set<string> mon_info_ids;
 
     // key_interrupt() calls since the last recorded input, and the call at
     // which a key was first seen waiting.
@@ -2204,6 +2397,7 @@ static JsonNode *_changed_rows(const vector<string> &rows,
 
 void on_command_wait()
 {
+    _count_command_wait();
     if (rp.active)
     {
         _replay_command_wait();
@@ -2221,13 +2415,21 @@ void on_command_wait()
     _add(c, "t", "cmd");
     _add(c, "n", (double)seq);
     _add(c, "you", _player_json());
-    _add(c, "mons", _monsters_json());
+    JsonNode *new_info = json_mkarray();
+    _add(c, "mons", _monsters_json(false, new_info, &rec.mon_info_ids));
+    if (json_first_child(new_info))
+        _add(c, "mon_info", new_info);
+    else
+        json_delete(new_info);
     _add(c, "items", _floor_items_json(false));
 
-    // Inventory, spells and skills only when they changed.
+    // Inventory, spells, skills and the like only when they changed.
     _add_if_changed(c, "inv", _inventory_json(), rec.last_inv);
+    _add_if_changed(c, "weapons", _weapons_json(), rec.last_weapons);
     _add_if_changed(c, "spells", _spells_json(), rec.last_spells);
     _add_if_changed(c, "skills", _skills_json(), rec.last_skills);
+    _add_if_changed(c, "abilities", _abilities_json(), rec.last_abilities);
+    _add_if_changed(c, "altars", _altars_json(), rec.last_altars);
     _add_if_changed(c, "terrain", _terrain_json(), rec.last_terrain);
     _add_if_changed(c, "clouds", _clouds_json(), rec.last_clouds);
 

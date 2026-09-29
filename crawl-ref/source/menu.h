@@ -192,6 +192,9 @@ public:
 
     virtual void add_tile(tile_def tile);
 
+    // mycrawl: fields of its own for the gameio live API (e.g. a price).
+    virtual void gameio_fields(JsonNode * /*entry*/) const { }
+
 protected:
     virtual string _get_text_preface() const;
     bool m_enabled;

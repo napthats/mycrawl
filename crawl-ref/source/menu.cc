@@ -3747,6 +3747,7 @@ JsonNode *Menu::gameio_json() const
         }
         if (me->selected())
             json_append_member(e, "selected", json_mkbool(true));
+        me->gameio_fields(e);
         json_append_element(entries, e);
     }
     json_append_member(m, "items", entries);

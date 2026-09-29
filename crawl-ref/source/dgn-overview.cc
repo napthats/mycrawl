@@ -493,6 +493,12 @@ static string _get_altars(bool display)
     return disp;
 }
 
+vector<pair<level_pos, god_type>> overview_altars()
+{
+    return vector<pair<level_pos, god_type>>(altars_present.begin(),
+                                             altars_present.end());
+}
+
 // Loops through gods, printing their altar status by colour.
 static string _print_altars_for_gods(const vector<god_type>& gods,
                                      bool print_unseen, bool display)

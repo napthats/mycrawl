@@ -94,6 +94,9 @@ namespace gameio
     void on_message(int channel, const string &text);
     void on_note(int turn, const string &place, const string &text);
     void on_command_wait();
+    // The end of each of your actions (world_reacts()), which took
+    // time_taken.
+    void on_player_turn(int time_taken);
 
 #ifdef USE_TILE_LOCAL
     // Wraps the window manager's wait_event(): records consumed input, and

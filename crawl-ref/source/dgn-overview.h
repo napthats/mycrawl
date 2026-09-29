@@ -7,6 +7,8 @@
 
 #include <vector>
 
+#include "god-type.h"
+#include "level-id.h"
 #include "stash.h"
 
 void overview_clear();
@@ -22,6 +24,10 @@ void enter_branch(branch_type branch, level_id from);
 void mark_corrupted_level(level_id li);
 void seen_tracked_feature(dungeon_feature_type feat);
 void explored_tracked_feature(dungeon_feature_type feat);
+
+// mycrawl: the altars seen, as the overview (Ctrl-O) and altar travel (_)
+// know them, for gameio.
+vector<pair<level_pos, god_type>> overview_altars();
 
 ///////////////////////////////////////////////////////////
 void set_level_exclusion_annotation(string str,

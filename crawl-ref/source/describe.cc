@@ -1393,7 +1393,7 @@ static void _append_skill_target_desc(string &description, skill_type skill,
     }
 }
 
-static string _desc_attack_delay(const item_def &item)
+static int _shown_attack_delay(const item_def &item)
 {
     // Hide speed/heavy brand from unidentified weapons.
     item_def dummy = item;
@@ -1404,7 +1404,12 @@ static string _desc_attack_delay(const item_def &item)
             artefact_set_property(dummy, ARTP_BRAND, SPWPN_NORMAL);
     }
 
-    const int cur_delay = you.attack_delay_with(&dummy).expected();
+    return you.attack_delay_with(&dummy).expected();
+}
+
+static string _desc_attack_delay(const item_def &item)
+{
+    const int cur_delay = _shown_attack_delay(item);
 
     return make_stringf("\n    Current attack delay: %.1f.", (float)cur_delay / 10);
 }
@@ -1658,6 +1663,33 @@ static void _append_weapon_stats(string &description, const item_def &item)
         // XX spacing following brand and dbrand for randarts/unrands is a bit
         // inconsistent with other object types
     }
+}
+
+// mycrawl: the numbers in the description of a weapon or a throwing weapon
+// (_append_weapon_stats() and _describe_missile()), for gameio. False when
+// the description shows no damage rating (useless items, ammunition).
+bool player_weapon_stats(const item_def &item, weapon_desc_stats &stats)
+{
+    const bool thrown = item.base_type == OBJ_MISSILES;
+    if (thrown ? !is_throwable(&you, item) || !property(item, PWPN_DAMAGE)
+               : !is_weapon(item))
+    {
+        return false;
+    }
+    if (is_useless_item(item) || !crawl_state.need_save)
+        return false;
+
+    const int dam = property(item, PWPN_DAMAGE);
+    stats.thrown = thrown;
+    stats.base_accuracy = thrown ? 0 : property(item, PWPN_HIT);
+    stats.base_damage = dam;
+    stats.base_delay = thrown ? 10 + dam / 2 : property(item, PWPN_SPEED);
+    stats.min_delay = thrown ? FASTEST_PLAYER_THROWING_SPEED
+                             : weapon_min_delay(item, item.is_identified());
+    stats.min_delay_skill = _item_training_target(item) / 10;
+    stats.attack_delay = _shown_attack_delay(item);
+    stats.damage_rating_text = damage_rating(&item, &stats.damage_rating);
+    return true;
 }
 
 static string _handedness_string(const item_def &item)

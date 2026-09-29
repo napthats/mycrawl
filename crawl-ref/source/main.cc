@@ -2660,6 +2660,7 @@ void world_reacts()
 
     ASSERT(you.time_taken >= 0);
     you.elapsed_time += you.time_taken;
+    gameio::on_player_turn(you.time_taken);
     if (you.elapsed_time >= 2*1000*1000*1000)
     {
         // 2B of 1/10 turns. A 32-bit signed int can hold 2.1B.
