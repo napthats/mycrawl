@@ -39,6 +39,7 @@
 #include "orb.h"
 #include "player-notices.h"
 #include "random.h"
+#include "rapid-descent.h"
 #include "religion.h"
 #include "shout.h"
 #include "spl-damage.h" // cancel_polar_vortex
@@ -1069,7 +1070,7 @@ level_id generic_shaft_dest(level_id place)
 
     // In descent, instead always drop one floor. Too brutal otherwise.
     if (crawl_state.game_is_descent())
-        place.depth = curr_depth + 1;
+        place.depth = branch_next_depth(place.branch, curr_depth);
 
     if (place.depth > max_depth)
         place.depth = max_depth;

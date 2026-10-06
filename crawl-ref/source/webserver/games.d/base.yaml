@@ -92,6 +92,11 @@ games:
     name: Descent
     options:
       - -descent
+  - id: rapid-descent-web-trunk
+    template: trunk
+    name: Rapid Descent
+    options:
+      - -rapid-descent
   - id: tut-web-trunk
     template: trunk
     name: Tutorial

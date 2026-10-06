@@ -20,6 +20,7 @@
 #include "maps.h"
 #include "ng-init-branches.h"
 #include "random.h"
+#include "rapid-descent.h"
 #include "religion.h"
 #include "state.h"
 #include "stringutil.h"
@@ -76,8 +77,22 @@ static void _use_overflow_temple(vector<god_type> temple_gods)
     CrawlVector &overflow_temples
         = you.props[OVERFLOW_TEMPLES_KEY].get_vector();
 
-    const unsigned int level = random_range(MIN_OVERFLOW_LEVEL,
-                                            MAX_OVERFLOW_LEVEL);
+    unsigned int level = random_range(MIN_OVERFLOW_LEVEL, MAX_OVERFLOW_LEVEL);
+
+    // mycrawl: Rapid Descent skips some floors of the Dungeon. Put the altars
+    // on one that the player will see.
+    if (level_is_skipped(level_id(BRANCH_DUNGEON, level)))
+    {
+        vector<int> floors;
+        for (int depth = MIN_OVERFLOW_LEVEL; depth <= MAX_OVERFLOW_LEVEL;
+             ++depth)
+        {
+            if (!level_is_skipped(level_id(BRANCH_DUNGEON, depth)))
+                floors.push_back(depth);
+        }
+        ASSERT(!floors.empty());
+        level = *random_iterator(floors);
+    }
 
     // List of overflow temples on this level.
     CrawlVector &level_temples = overflow_temples[level - 1].get_vector();

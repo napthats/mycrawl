@@ -65,6 +65,7 @@
 #include "player-stats.h"
 #include "prompt.h"
 #include "randbook.h"
+#include "rapid-descent.h"
 #include "shopping.h"
 #include "skills.h"
 #include "spl-book.h"
@@ -2603,6 +2604,8 @@ bool gain_piety(int original_gain, int denominator, bool should_scale_piety)
 
     if (crawl_state.game_is_sprint() && should_scale_piety)
         pgn = sprint_modify_piety(pgn);
+    else if (should_scale_piety)
+        pgn = rapid_descent_modify_piety(pgn);
 
     pgn = div_rand_round(pgn, denominator);
     while (pgn-- > 0)

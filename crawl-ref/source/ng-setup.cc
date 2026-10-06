@@ -398,6 +398,7 @@ void setup_game(const newgame_def& ng,
     {
     case GAME_TYPE_NORMAL:
     case GAME_TYPE_DESCENT:
+    case GAME_TYPE_RAPID_DESCENT:
     case GAME_TYPE_CUSTOM_SEED:
     case GAME_TYPE_TUTORIAL:
     case GAME_TYPE_SPRINT:

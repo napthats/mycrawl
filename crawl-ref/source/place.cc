@@ -10,6 +10,7 @@
 #include "branch.h"
 #include "libutil.h"
 #include "player.h"
+#include "rapid-descent.h"
 
 // Prepositional form of branch level name. For example, "in the
 // Vestibule of Hell" or "on level 3 of the Dungeon".
@@ -52,7 +53,8 @@ vector<level_id> all_dungeon_ids()
     for (branch_iterator it; it; ++it)
     {
         for (int depth = 1; depth <= brdepth[it->id]; depth++)
-            out.emplace_back(it->id, depth);
+            if (!level_is_skipped(level_id(it->id, depth)))
+                out.emplace_back(it->id, depth);
     }
     return out;
 }

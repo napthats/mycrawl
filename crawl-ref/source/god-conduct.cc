@@ -10,6 +10,7 @@
 #include "message.h"
 #include "monster.h"
 #include "mon-util.h"
+#include "rapid-descent.h"
 #include "religion.h"
 #include "state.h"
 #include "stringutil.h" // uppercase_first
@@ -864,7 +865,10 @@ static like_map divine_likes[] =
                 ASSERT(you.props.exists(ASHENZARI_CURSE_PROGRESS_KEY));
 
                 if (one_chance_in(100))
-                    you.props[ASHENZARI_CURSE_PROGRESS_KEY].get_int()++;
+                {
+                    you.props[ASHENZARI_CURSE_PROGRESS_KEY].get_int()
+                        += rapid_descent_scale(1);
+                }
             }
         } },
     },
@@ -902,7 +906,10 @@ static like_map divine_likes[] =
                 ASSERT(you.props.exists(RU_SACRIFICE_PROGRESS_KEY));
 
                 if (one_chance_in(100))
-                    you.props[RU_SACRIFICE_PROGRESS_KEY].get_int()++;
+                {
+                    you.props[RU_SACRIFICE_PROGRESS_KEY].get_int()
+                        += rapid_descent_scale(1);
+                }
             }
         } },
     },

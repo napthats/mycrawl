@@ -33,6 +33,8 @@
 #include "mon-pick.h"
 #include "mon-util.h"
 #include "ng-init.h"
+#include "options.h"
+#include "rapid-descent.h"
 #include "shopping.h"
 #include "spl-book.h"
 #include "state.h"
@@ -1397,6 +1399,13 @@ void objstat_generate_stats()
     if (!crawl_state.force_map.empty() && !mapstat_find_forced_map())
         return;
 
+    // mycrawl: let -descent and -rapid-descent build those dungeons.
+    if (Options.game.type == GAME_TYPE_DESCENT
+        || Options.game.type == GAME_TYPE_RAPID_DESCENT)
+    {
+        crawl_state.type = Options.game.type;
+    }
+
     initialise_item_descriptions();
     initialise_branch_depths();
 
@@ -1418,7 +1427,8 @@ void objstat_generate_stats()
         {
             const level_id lid(br, dep);
             if (SysEnv.map_gen_range
-                && !SysEnv.map_gen_range->is_usable_in(lid))
+                && !SysEnv.map_gen_range->is_usable_in(lid)
+                || level_is_skipped(lid))
             {
                 continue;
             }

@@ -31,6 +31,7 @@
 #include "notes.h"
 #include "output.h"
 #include "random.h"
+#include "rapid-descent.h"
 #include "religion.h"
 #include "skill-menu.h"
 #include "sprint.h"
@@ -1342,6 +1343,8 @@ static void _train_skills(int exp, const int cost, const bool simu)
     // (by inflated XP and inflated piety gain)
     if (crawl_state.game_is_sprint())
         magic_gain = sprint_modify_exp_inverse(magic_gain);
+    // Likewise for Rapid Descent's inflated experience and piety.
+    magic_gain = rapid_descent_unscale(magic_gain);
 
     if (magic_gain && !simu)
         did_god_conduct(DID_SPELL_PRACTISE, div_rand_round(magic_gain, 10));

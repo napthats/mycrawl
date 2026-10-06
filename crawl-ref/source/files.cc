@@ -77,6 +77,7 @@
 #include "notes.h"
 #include "place.h"
 #include "prompt.h"
+#include "rapid-descent.h"
 #include "religion.h"
 #include "skills.h"
 #include "species.h"
@@ -1918,9 +1919,13 @@ bool pregen_dungeon(const level_id &stopping_point)
             for (int i = 1; i <= brdepth[br]; i++)
             {
                 level_id new_level = level_id(br, i);
-                // skip any levels that have already generated.
-                if (you.save->has_chunk(new_level.describe()))
+                // skip any levels that have already generated, or that this
+                // game leaves out.
+                if (you.save->has_chunk(new_level.describe())
+                    || level_is_skipped(new_level))
+                {
                     continue;
+                }
                 to_generate.push_back(new_level);
 
                 if (br == stopping_point.branch

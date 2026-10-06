@@ -69,6 +69,7 @@
 #include "player-save-info.h"
 #include "player-stats.h"
 #include "prompt.h"
+#include "rapid-descent.h"
 #include "religion.h"
 #include "shout.h"
 #include "skills.h"
@@ -2669,6 +2670,10 @@ unsigned int gain_exp(unsigned int exp_gained)
 {
     if (crawl_state.game_is_arena())
         return 0;
+
+    // mycrawl: Rapid Descent skips some floors, and each floor gives the
+    // experience of the floors it stands in for.
+    exp_gained = rapid_descent_scale(exp_gained);
 
     you.experience_pool += exp_gained;
 
@@ -9416,6 +9421,7 @@ void maybe_harvest_memory(const monster& victim)
     int xp = exp_value(victim);
     if (crawl_state.game_is_sprint())
         xp = sprint_modify_exp(xp);
+    xp = rapid_descent_scale(xp);
 
     progress += div_rand_round(xp, calc_skill_cost(you.skill_cost_level));
 

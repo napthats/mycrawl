@@ -427,7 +427,8 @@ static void _choose_char(newgame_def& ng, newgame_def& choice,
 
 #if defined(DGAMELAUNCH) && defined(TOURNEY)
     // Apologies to non-public servers.
-    if (ng.type == GAME_TYPE_NORMAL || ng.type == GAME_TYPE_DESCENT)
+    if (ng.type == GAME_TYPE_NORMAL || ng.type == GAME_TYPE_DESCENT
+        || ng.type == GAME_TYPE_RAPID_DESCENT)
     {
         if (!yesno("Trunk doesn't count for the tournament, you want "
                    TOURNEY ". Play trunk anyway? (Y/N)", false, 'n'))

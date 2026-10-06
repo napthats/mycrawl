@@ -58,6 +58,7 @@
 #include "mutation.h"
 #include "nearby-danger.h"
 #include "notes.h"
+#include "rapid-descent.h"
 #include "religion.h"
 #include "shout.h"
 #include "spl-damage.h"
@@ -345,6 +346,7 @@ static void _gold_pile(item_def &corpse, monster_type corpse_class)
     // the gold aura duration!)
     if (crawl_state.game_is_sprint())
         corpse.quantity *= SPRINT_MULTIPLIER;
+    corpse.quantity = rapid_descent_scale(corpse.quantity);
 
     if (you.props[GOZAG_GOLD_AURA_KEY].get_int() < GOZAG_GOLD_AURA_MAX)
         ++you.props[GOZAG_GOLD_AURA_KEY].get_int();
@@ -3066,7 +3068,8 @@ item_def* monster_die(monster& mons, killer_type killer,
                 ASSERT(you.props.exists(RU_SACRIFICE_PROGRESS_KEY));
                 int current_progress =
                         you.props[RU_SACRIFICE_PROGRESS_KEY].get_int();
-                you.props[RU_SACRIFICE_PROGRESS_KEY] = current_progress + 1;
+                you.props[RU_SACRIFICE_PROGRESS_KEY] = current_progress
+                                                       + rapid_descent_scale(1);
             }
 
             break;

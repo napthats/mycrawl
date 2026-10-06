@@ -43,6 +43,7 @@
 #include "output.h"
 #include "player-stats.h"
 #include "prompt.h"
+#include "rapid-descent.h"
 #include "religion.h"
 #include "shout.h"
 #include "spl-clouds.h"
@@ -734,12 +735,14 @@ level_id level_above()
     // can't re-enter old zig floors; they get regenerated
     if (player_in_branch(BRANCH_ZIGGURAT))
         return level_id();
-    if (you.depth > 1)
-        return level_id(you.where_are_you, you.depth - 1);
+    const int above = branch_prev_depth(you.where_are_you, you.depth);
+    if (above >= 1)
+        return level_id(you.where_are_you, above);
     if (!is_connected_branch(you.where_are_you))
         return level_id(); // no rocketing out of the abyss, portals, pan...
     const level_id entry = brentry[you.where_are_you];
-    if (entry.is_valid())
+    // (Rapid Descent may have left out the floor of the normal entrance.)
+    if (entry.is_valid() && !level_is_skipped(entry))
         return entry;
     return level_id();
 }
@@ -1226,13 +1229,21 @@ level_id stair_destination(dungeon_feature_type feat, const string &dst,
     case DNGN_STONE_STAIRS_UP_I:
     case DNGN_STONE_STAIRS_UP_II:
     case DNGN_STONE_STAIRS_UP_III:
-        if (you.depth <= 1)
+    {
+        // Rapid Descent skips some floors; take the stairs past them.
+        int above = branch_prev_depth(you.where_are_you, you.depth);
+        // Every floor above this one is skipped. The upstairs are normally
+        // gone by now, since this floor is entered from another branch.
+        if (above < 1 && you.depth > 1)
+            above = you.depth - 1;
+        if (above < 1)
         {
             if (you.wizard && !for_real)
                 return level_id();
             die("upstairs from top of a branch");
         }
-        return level_id(you.where_are_you, you.depth - 1);
+        return level_id(you.where_are_you, above);
+    }
 
     case DNGN_EXIT_HELL:
         // If set, it would be found as a branch exit.
@@ -1258,7 +1269,7 @@ level_id stair_destination(dungeon_feature_type feat, const string &dst,
     {
         ASSERT(!at_branch_bottom());
         level_id lev = level_id::current();
-        lev.depth++;
+        lev.depth = branch_next_depth(lev.branch, lev.depth);
         return lev;
     }
 
@@ -1336,7 +1347,7 @@ level_id stair_destination(dungeon_feature_type feat, const string &dst,
     for (branch_iterator it; it; ++it)
     {
         if (it->entry_stairs == feat)
-            return level_id(it->id);
+            return level_id(it->id, branch_first_depth(it->id));
     }
 
     return level_id();

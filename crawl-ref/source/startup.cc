@@ -433,6 +433,9 @@ static const vector<game_modes_menu_item> entries =
         "than the tutorial."},
     {GAME_TYPE_DESCENT, "Dungeon Descent",
         "Mode with a branching, one-way path through the Dungeon." },
+    {GAME_TYPE_RAPID_DESCENT, "Rapid Descent",
+        "A shorter Dungeon Descent: about half the floors, with more "
+        "experience and items to make up for the missing ones." },
     {GAME_TYPE_SPRINT, "Dungeon Sprint",
         "Hard, fixed single level game mode." },
     {GAME_TYPE_INSTRUCTIONS, "Instructions", "Help menu." },
@@ -737,6 +740,7 @@ private:
         {
         case GAME_TYPE_NORMAL:
         case GAME_TYPE_DESCENT:
+        case GAME_TYPE_RAPID_DESCENT:
         case GAME_TYPE_CUSTOM_SEED:
         case GAME_TYPE_TUTORIAL:
         case GAME_TYPE_SPRINT:
@@ -917,6 +921,7 @@ void UIStartupMenu::menu_item_activated(int id)
     {
     case GAME_TYPE_NORMAL:
     case GAME_TYPE_DESCENT:
+    case GAME_TYPE_RAPID_DESCENT:
     case GAME_TYPE_CUSTOM_SEED:
     case GAME_TYPE_TUTORIAL:
     case GAME_TYPE_SPRINT:

@@ -51,6 +51,7 @@
 #include "output.h"
 #include "place.h"
 #include "prompt.h"
+#include "rapid-descent.h"
 #include "religion.h"
 #include "stairs.h"
 #include "state.h"
@@ -2168,7 +2169,7 @@ static string _get_trans_travel_dest(const level_pos &target,
 // current location.
 static int _get_nearest_level_depth(uint8_t branch)
 {
-    int depth = 1;
+    int depth = branch_first_depth(static_cast<branch_type>(branch));
 
     // Hell needs special treatment, because we can't walk up
     // Hell and its branches to the main dungeon.
@@ -2595,7 +2596,7 @@ public:
 
 level_id find_up_level(level_id curr, bool up_branch)
 {
-    --curr.depth;
+    curr.depth = branch_prev_depth(curr.branch, curr.depth);
 
     if (up_branch)
         curr.depth = 0;
@@ -2625,7 +2626,7 @@ static level_id _find_up_level()
 level_id find_down_level(level_id curr)
 {
     if (curr.depth < brdepth[curr.branch])
-        ++curr.depth;
+        curr.depth = branch_next_depth(curr.branch, curr.depth);
     return curr;
 }
 
@@ -2652,7 +2653,7 @@ level_id find_deepest_explored(level_id curr)
 
 bool branch_entered(branch_type branch)
 {
-    const level_id lid(branch, 1);
+    const level_id lid(branch, branch_first_depth(branch));
     LevelInfo *linf = travel_cache.find_level_info(lid);
     return linf && !linf->empty();
 }
@@ -2738,6 +2739,10 @@ static level_pos _parse_travel_target(string s, const level_pos &targ)
     {
         result.id.depth = atoi(s.c_str());
         result.pos.x = result.pos.y = -1;
+        // Rapid Descent: go on to the next floor that the game has.
+        if (level_is_skipped(result.id))
+            result.id.depth = branch_next_depth(result.id.branch,
+                                                result.id.depth);
     }
 
     if (!result.id.depth)
@@ -2791,7 +2796,7 @@ static level_pos _travel_depth_munge(int munge_method, const string &s,
         break;
     }
     if (result.id.depth < 1)
-        result.id.depth = 1;
+        result.id.depth = branch_first_depth(result.id.branch);
     return result;
 }
 
@@ -2813,6 +2818,11 @@ static level_pos _prompt_travel_depth(const level_id &id, bool remember_targ)
     }
     else // otherwise, use the nearest level
         target.id.depth = _get_nearest_level_depth(target.id.branch);
+    if (level_is_skipped(target.id))
+    {
+        target.id.depth = branch_next_depth(target.id.branch,
+                                            target.id.depth);
+    }
 
     clear_messages();
     msgwin_temporary_mode temp;
@@ -3520,7 +3530,7 @@ level_id level_id::get_next_level_id(const coord_def &pos)
         if (gridc == it->entry_stairs)
         {
             id.branch = it->id;
-            id.depth = 1;
+            id.depth = branch_first_depth(it->id);
             break;
         }
     }
@@ -3530,11 +3540,11 @@ level_id level_id::get_next_level_id(const coord_def &pos)
     case DNGN_STONE_STAIRS_DOWN_I:   case DNGN_STONE_STAIRS_DOWN_II:
     case DNGN_STONE_STAIRS_DOWN_III: case DNGN_ESCAPE_HATCH_DOWN:
     case DNGN_ABYSSAL_STAIR:
-        id.depth++;
+        id.depth = branch_next_depth(id.branch, id.depth);
         break;
     case DNGN_STONE_STAIRS_UP_I:     case DNGN_STONE_STAIRS_UP_II:
     case DNGN_STONE_STAIRS_UP_III:   case DNGN_ESCAPE_HATCH_UP:
-        id.depth--;
+        id.depth = branch_prev_depth(id.branch, id.depth);
         break;
     default:
         break;

@@ -21,6 +21,7 @@
 #include "ng-init.h"
 #include "ng-setup.h"
 #include "player.h"
+#include "rapid-descent.h"
 #include "shopping.h"
 #include "state.h"
 #include "stringutil.h"
@@ -200,6 +201,8 @@ static void _dungeon_places()
         {
             level_id l(it->id, depth);
             if (SysEnv.map_gen_range && !SysEnv.map_gen_range->is_usable_in(l))
+                continue;
+            if (level_is_skipped(l))
                 continue;
             generated_levels.push_back(l);
             if (new_branch)
@@ -527,6 +530,13 @@ void mapstat_generate_stats()
 
     if (!crawl_state.force_map.empty() && !mapstat_find_forced_map())
         return;
+
+    // mycrawl: let -descent and -rapid-descent build those dungeons.
+    if (Options.game.type == GAME_TYPE_DESCENT
+        || Options.game.type == GAME_TYPE_RAPID_DESCENT)
+    {
+        crawl_state.type = Options.game.type;
+    }
 
     initialise_item_descriptions();
     initialise_branch_depths();

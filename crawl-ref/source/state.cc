@@ -595,7 +595,15 @@ bool game_state::game_is_hints() const
 bool game_state::game_is_descent() const
 {
     ASSERT(game_is_valid_type());
-    return type == GAME_TYPE_DESCENT;
+    // mycrawl: Rapid Descent is a shortened Descent, and follows all of its
+    // rules unless game_is_rapid_descent() says otherwise.
+    return type == GAME_TYPE_DESCENT || type == GAME_TYPE_RAPID_DESCENT;
+}
+
+bool game_state::game_is_rapid_descent() const
+{
+    ASSERT(game_is_valid_type());
+    return type == GAME_TYPE_RAPID_DESCENT;
 }
 
 bool game_state::game_is_hints_tutorial() const
@@ -628,6 +636,8 @@ string game_state::game_type_name_for(game_type _type)
         return "Dungeon Sprint";
     case GAME_TYPE_DESCENT:
         return "Dungeon Descent";
+    case GAME_TYPE_RAPID_DESCENT:
+        return "Rapid Descent";
     case NUM_GAME_TYPE:
         return "Unknown";
     }
@@ -657,6 +667,8 @@ string game_state::game_savedir_path() const
         return "sprint/";
     case GAME_TYPE_DESCENT:
         return "descent/";
+    case GAME_TYPE_RAPID_DESCENT:
+        return "rapid-descent/";
     default:
         return "";
     }
@@ -671,6 +683,7 @@ string game_state::game_type_qualifier() const
     case GAME_TYPE_HINTS:
     case GAME_TYPE_TUTORIAL:
     case GAME_TYPE_DESCENT:
+    case GAME_TYPE_RAPID_DESCENT:
         return "-" + gametype_to_str(type);
     default:
         return "";

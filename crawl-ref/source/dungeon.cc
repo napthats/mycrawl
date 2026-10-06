@@ -60,6 +60,7 @@
 #include "place.h"
 #include "randbook.h"
 #include "random.h"
+#include "rapid-descent.h"
 #include "religion.h"
 #include "show.h"
 #include "spl-book.h"
@@ -4343,7 +4344,10 @@ static void _builder_items()
     int i = 0;
     object_class_type specif_type = OBJ_RANDOM;
     int items_levels = env.absdepth0;
-    int items_wanted = _num_items_wanted(items_levels);
+    // mycrawl: in Rapid Descent this floor also holds the items of the floors
+    // skipped next to it.
+    int items_wanted =
+        rapid_descent_floor_items(_num_items_wanted(items_levels));
 
     if (player_in_branch(BRANCH_VAULTS))
     {
@@ -7762,9 +7766,9 @@ int starting_absdepth()
 {
     if (you.char_class == JOB_DELVER)
     {
-        // makes delver sort of work in descent
+        // makes delver sort of work in descent: start on the second floor
         if (crawl_state.game_is_descent())
-            return 1;
+            return branch_next_depth(BRANCH_DUNGEON, 1) - 1;
         return 4;
     }
     return 0; // (absdepth is 0-indexed)
