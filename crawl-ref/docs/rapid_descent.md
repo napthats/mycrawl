@@ -181,6 +181,10 @@ crawl -rapid-descent -objstat "D,Lair,Orc,Swamp,Shoals,Snake,Spider,Elf,Crypt,Va
 
 ## 6. 既知の差・今後の検討
 
+（ブランチ `claude/rapid-descent-loot-experiments` で、ここに挙げた不足に対する補填を試し、
+計測しました。結果は [rapid_descent_loot_experiments.md](rapid_descent_loot_experiments.md)
+にあります。）
+
 - **portal の数は約半分になるはずです**（未計測）。portal は階ごとの確率で現れる
   ためです。報酬は補填していませんが、時間短縮には寄与します。
 - **ユニークとの遭遇が減ります。** shop も減ります（金は補填されます）。
