@@ -5,7 +5,10 @@ runs only (nothing is generated here).
     python3 -I targets.py RESDIR roles   descent RUN [RUN...]
     python3 -I targets.py RESDIR kept    descent
     python3 -I targets.py RESDIR threat  descent
+    python3 -I targets.py RESDIR fights  descent rapid
     python3 -I targets.py RESDIR xl      descent KILLFRACTION
+    python3 -I targets.py RESDIR danger  descent rapid KILLFRACTION
+    python3 -I targets.py RESDIR piety   descent rapid KILLFRACTION
     python3 -I targets.py RESDIR shops   descent RUN [RUN...]
 
 roles:  scrolls, potions and wands by role (see ROLE), route totals per game
@@ -14,9 +17,19 @@ kept:   the share of Descent's route totals on the floors Rapid Descent keeps,
         i.e. what Rapid Descent would get with no compensation at all.
 threat: monsters and their experience per floor; shares on kept floors,
         branch ends and the late branches.
+fights: monsters actually generated in a Rapid Descent run against Descent:
+        all, in and out of vaults, on branch ends and elsewhere, their
+        experience, and floor cells.
 xl:     experience level on arriving at each kept floor, Descent against
-        Rapid Descent (experience x r), if the player kills KILLFRACTION of
-        what is generated (human experience aptitude).
+        Rapid Descent (experience x r, and without x r), if the player
+        kills KILLFRACTION of what is generated (human experience aptitude).
+danger: monsters whose HD is at least the player's experience level on
+        arriving at their floor, plus an offset, along the route; Rapid
+        Descent (its own run, experience x r) against Descent. Also uniques.
+piety:  kill piety of a god like Trog (natural monsters, at most one point
+        per kill with chance 1 - 6/(18 + HD - XL/2), x r in Rapid Descent):
+        where six stars (160) are reached, and the piety left over after
+        that for abilities, in total and per kill.
 shops:  shop stock per item class.
 The route and its weights are those of analyze.py."""
 import os
@@ -191,6 +204,40 @@ def threat(run):
     print("%-24s experience kept %.3f" % ("  of which kept", k / t))
 
 
+def fights(base, rapid):
+    def total(run, cls, key, field, pick=lambda br, d: True):
+        tot = 0.0
+        files = run.files("objstat_%s.tsv" % cls)
+        for rows in files:
+            for lev, d in rows.get(key, {}).items():
+                m = A.LEVRE.match(lev)
+                if not m or m.group(1) not in A.W:
+                    continue
+                if pick(m.group(1), int(m.group(2))):
+                    tot += A.W[m.group(1)] * d.get(field, 0.0) / len(files)
+        return tot
+
+    end = lambda br, d: d == A.N[br]
+    other = lambda br, d: d != A.N[br]
+    rows = [("monsters", "Monsters", "All Monsters", "Num", None),
+            ("  in vaults", "Monsters", "All Monsters", "NumVault", None),
+            ("  on branch ends", "Monsters", "All Monsters", "Num", end),
+            ("  on other floors", "Monsters", "All Monsters", "Num", other),
+            ("experience", "Monsters", "All Monsters", "TotalXP", None),
+            ("floor cells", "Features", "floor", "Num", None)]
+    for label, cls, key, field, pick in rows:
+        args = (cls, key, field) + ((pick,) if pick else ())
+        a, b = total(base, *args), total(rapid, *args)
+        print("%-20s Descent %10.1f  Rapid %10.1f  ratio %.3f"
+              % (label, a, b, b / a))
+    a = total(base, "Monsters", "All Monsters", "Num") \
+        - total(base, "Monsters", "All Monsters", "NumVault")
+    b = total(rapid, "Monsters", "All Monsters", "Num") \
+        - total(rapid, "Monsters", "All Monsters", "NumVault")
+    print("%-20s Descent %10.1f  Rapid %10.1f  ratio %.3f"
+          % ("  outside vaults", a, b, b / a))
+
+
 # exp_needed() for experience aptitude 0, levels 1-27 (player.cc).
 _XP = [0, 10, 30, 70, 140, 270, 520, 1010, 1980, 3910, 7760, 15450, 26895,
        45585, 72745, 108375, 152475, 205045, 266085, 335595, 413575, 500025,
@@ -206,33 +253,133 @@ def _level(xp):
     return lv + (xp - _XP[lv - 1]) / (_XP[lv] - _XP[lv - 1])
 
 
+# The usual route in order, one Lair branch and one of Elf/Crypt (averaged),
+# as in analyze.py.
+_ROUTE = ([(("D",), d) for d in range(1, 13)]
+          + [(("Lair",), d) for d in range(1, 6)]
+          + [(("Orc",), d) for d in range(1, 3)]
+          + [(("Swamp", "Shoals", "Snake", "Spider"), d) for d in range(1, 5)]
+          + [(("Vaults",), d) for d in range(1, 6)]
+          + [(("Elf", "Crypt"), d) for d in range(1, 4)]
+          + [(("Depths",), d) for d in range(1, 5)]
+          + [(("Slime",), d) for d in range(1, 6)]
+          + [(("Zot",), d) for d in range(1, 6)])
+_NOT_UNIQUE = {"Brimstone Fiend", "Executioner", "Ice Fiend", "Killer Klown",
+               "Monster", "Orb Guardian", "Tzitzimitl"}
+
+
+def _types(run):
+    """(branch, depth) -> monster name -> [number, experience, HD], averaged
+    over batches (HD weighted by number)."""
+    files = run.files("objstat_Monsters.tsv")
+    out = {}
+    for rows in files:
+        for name, levs in rows.items():
+            if name == "All Monsters":
+                continue
+            for lev, d in levs.items():
+                m = A.LEVRE.match(lev)
+                if not m or m.group(1) not in A.W:
+                    continue
+                t = out.setdefault((m.group(1), int(m.group(2))), {})
+                t = t.setdefault(name, [0.0, 0.0, 0.0])
+                num = d.get("Num", 0.0)
+                t[0] += num / len(files)
+                t[1] += d.get("TotalXP", 0.0) / len(files)
+                t[2] += num * d.get("MonsHD", 0.0) / len(files)
+    for floor in out.values():
+        for t in floor.values():
+            t[2] = t[2] / t[0] if t[0] else 0.0
+    return out
+
+
+def _walk(run, kill):
+    """Floors of the route the run visits, in order, with the experience
+    level on arrival: (branches, depth, ratio r, level, monster types)."""
+    types = _types(run)
+    xp = 0.0
+    for brs, d in _ROUTE:
+        br = brs[0]
+        if run.rapid and not _is_kept(br, d):
+            continue
+        r = A.ratio(br, d, run.rapid)
+        floor = {}
+        for b in brs:
+            for name, (num, exp, hd) in types.get((b, d), {}).items():
+                f = floor.setdefault(name, [0.0, 0.0, hd])
+                f[0] += num / len(brs)
+                f[1] += exp / len(brs)
+        yield brs, d, r, _level(xp), floor
+        xp += kill * r * sum(f[1] for f in floor.values())
+
+
+def danger(base, rapid, kill):
+    def count(run, off):
+        n = 0.0
+        for _, _, _, lv, floor in _walk(run, kill):
+            n += sum(f[0] for f in floor.values() if f[2] >= lv + off)
+        return n
+
+    for off in (-5, -3, 0, 3):
+        a, b = count(base, off), count(rapid, off)
+        print("HD >= XL%+d on arrival: Descent %7.1f  Rapid %7.1f  ratio %.3f"
+              % (off, a, b, b / a))
+    uniq = []
+    for run in (base, rapid):
+        uniq.append(sum(f[0] for *_, floor in _walk(run, kill)
+                        for name, f in floor.items()
+                        if name[:1].isupper() and name not in _NOT_UNIQUE))
+    print("uniques: Descent %.1f  Rapid %.1f  ratio %.3f"
+          % (uniq[0], uniq[1], uniq[1] / uniq[0]))
+
+
+def piety(base, rapid, kill):
+    for run in (base, rapid):
+        piety = left = left_kills = 0.0
+        six = None
+        for brs, d, r, lv, floor in _walk(run, kill):
+            kills = kill * sum(f[0] for f in floor.values())
+            gain = 0.0
+            for num, _, hd in floor.values():
+                den = 18 + hd - int(lv) // 2
+                chance = max(0.0, 1 - 6.0 / den) if den > 0 else 0.0
+                gain += kill * num * chance * r
+            # Gains slow down above 100 and 160 piety (religion.cc).
+            for _ in range(100):
+                rate = 1.0 if piety < 100 else 2 / 3 if piety < 160 else 4 / 9
+                if piety >= 160:
+                    left += gain / 100 * rate
+                    left_kills += kills / 100
+                else:
+                    piety = min(160.0, piety + gain / 100 * rate)
+            if six is None and piety >= 160:
+                six = "/".join(brs) + ":%d" % d
+        print("%-10s six stars at %-28s left over %6.1f over %6.0f kills"
+              " (%.3f per kill)" % (run.name, six, left, left_kills,
+                                    left / left_kills if left_kills else 0))
+
+
 def xl(run, kill):
     per = _per_floor(run)
-    # One Lair branch and one of Elf/Crypt (averaged), as in analyze.py.
-    route = [(("D",), d) for d in range(1, 13)]
-    route += [(("Lair",), d) for d in range(1, 6)]
-    route += [(("Orc",), d) for d in range(1, 3)]
-    route += [(("Swamp", "Shoals", "Snake", "Spider"), d) for d in range(1, 5)]
-    route += [(("Vaults",), d) for d in range(1, 6)]
-    route += [(("Elf", "Crypt"), d) for d in range(1, 4)]
-    route += [(("Depths",), d) for d in range(1, 5)]
-    route += [(("Slime",), d) for d in range(1, 6)]
-    route += [(("Zot",), d) for d in range(1, 6)]
-    xd = xr = 0.0
-    print("%-16s %8s %8s %7s" % ("arriving at", "Descent", "Rapid", "diff"))
+    route = _ROUTE
+    xd = xr = xn = 0.0
+    print("%-16s %8s %8s %7s %8s" % ("arriving at", "Descent", "Rapid",
+                                      "diff", "no x r"))
     for brs, d in route:
         br = brs[0]
         gained = kill * sum(per.get((b, d), (0, 0))[1]
                                 for b in brs) / len(brs)
         if _is_kept(br, d):
             name = "Lair branch" if len(brs) == 4 else "/".join(brs)
-            print("%-16s %8.2f %8.2f %+7.2f" % (name + ":%d" % d,
-                                                _level(xd), _level(xr),
-                                                _level(xr) - _level(xd)))
+            print("%-16s %8.2f %8.2f %+7.2f %8.2f"
+                  % (name + ":%d" % d, _level(xd), _level(xr),
+                     _level(xr) - _level(xd), _level(xn)))
             xr += gained * A.ratio(br, d, True)
+            xn += gained
         xd += gained
-    print("%-16s %8.2f %8.2f %+7.2f" % ("end", _level(xd), _level(xr),
-                                        _level(xr) - _level(xd)))
+    print("%-16s %8.2f %8.2f %+7.2f %8.2f"
+          % ("end", _level(xd), _level(xr), _level(xr) - _level(xd),
+             _level(xn)))
 
 
 def shops(runs):
@@ -250,6 +397,14 @@ def main():
     resdir, what = sys.argv[1], sys.argv[2]
     if what == "xl":
         xl(A.Run(resdir, sys.argv[3]), float(sys.argv[4]))
+        return
+    if what == "fights":
+        fights(A.Run(resdir, sys.argv[3]), A.Run(resdir, sys.argv[4]))
+        return
+    if what in ("danger", "piety"):
+        base, rapid = A.Run(resdir, sys.argv[3]), A.Run(resdir, sys.argv[4])
+        (danger if what == "danger" else piety)(base, rapid,
+                                                 float(sys.argv[5]))
         return
     runs = [A.Run(resdir, n) for n in sys.argv[3:]]
     {"roles": lambda: roles(runs), "kept": lambda: kept(runs[0]),
