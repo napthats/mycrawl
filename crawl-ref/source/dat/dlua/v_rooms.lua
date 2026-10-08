@@ -150,6 +150,19 @@ local function make_tagged_room(options,chosen)
   return room
 end
 
+-- mycrawl: Rapid Descent floors roll once more for each skipped floor they
+-- stand in for. With one roll this is the usual single roll.
+local function portal_room_chance(percent)
+  local rolls_fn = dgn.rapid_descent_portal_rolls
+  local rolls = rolls_fn and rolls_fn() or 1
+  for i = 1, rolls do
+    if crawl.x_chance_in_y(percent, 100) then
+      return true
+    end
+  end
+  return false
+end
+
 local function pick_room(e, options)
 
   -- Filters out generators that have reached their max
@@ -165,7 +178,7 @@ local function pick_room(e, options)
   local chosen
   -- Roll the chance to pick a ghost vault room if we haven't done so.
   if not options.did_necropolis_chance then
-    if crawl.x_chance_in_y(dgn.necropolis_chance_percent, 100) then
+    if portal_room_chance(dgn.necropolis_chance_percent) then
       -- Find the ghost vault generator, if this somehow doesn't exist, we will
       -- fall back to the usual set of generators.
       for i, r in ipairs(options.room_type_weights) do
@@ -178,7 +191,7 @@ local function pick_room(e, options)
   end
   -- Roll the chance to pick a Wizlab vault room if we haven't done so.
   if not options.did_wizlab_chance then
-    if crawl.x_chance_in_y(dgn.wizlab_chance_percent, 100) then
+    if portal_room_chance(dgn.wizlab_chance_percent) then
       for i, r in ipairs(options.room_type_weights) do
         if r.generator == "tagged" and r.tag == "vaults_wizlab" then
           chosen = r
@@ -189,7 +202,7 @@ local function pick_room(e, options)
   end
   -- Roll the chance to pick a Desolation vault room if we haven't done so.
   if not options.did_desolation_chance then
-    if crawl.x_chance_in_y(dgn.desolation_chance_percent, 100) then
+    if portal_room_chance(dgn.desolation_chance_percent) then
       for i, r in ipairs(options.room_type_weights) do
         if r.generator == "tagged" and r.tag == "vaults_desolation" then
           chosen = r

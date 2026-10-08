@@ -71,6 +71,7 @@
 #include "player.h"
 #include "player-stats.h"
 #include "random.h"
+#include "rapid-descent.h"
 #include "religion.h"
 #include "shopping.h"
 #include "shout.h"
@@ -824,7 +825,8 @@ static void _decrement_durations()
         && one_chance_in(5))
     {
         you.duration[DUR_PIETY_POOL]--;
-        gain_piety(1, 1);
+        // mycrawl: the pool holds donated gold; see zin_tithe().
+        gain_piety(rapid_descent_unscale(1), 1);
 
 #if defined(DEBUG_DIAGNOSTICS) || defined(DEBUG_SACRIFICE) || defined(DEBUG_PIETY)
         mprf(MSGCH_DIAGNOSTICS, "Piety increases by 1 due to piety pool.");

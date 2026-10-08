@@ -26,6 +26,7 @@
 #include "files.h"
 #include "mapmark.h"
 #include "message.h"
+#include "rapid-descent.h"
 #include "state.h"
 #include "stringutil.h"
 #include "syscalls.h"
@@ -1035,6 +1036,19 @@ static bool _vault_chance_new(const map_def &map,
     return false;
 }
 
+// mycrawl: Rapid Descent floors roll serial shops once for themselves and
+// once for each skipped floor they stand in for.
+static bool _vault_chance_roll(const map_def &map, const level_id &place)
+{
+    map_chance chance = map.chance(place);
+    if (map.name == "serial_shops")
+    {
+        const int rolls = rapid_descent_rolls(place);
+        chance.chance = min(CHANCE_ROLL, chance.chance * rolls);
+    }
+    return chance.roll();
+}
+
 class vault_chance_roll_iterator
 {
 public:
@@ -1066,7 +1080,7 @@ public:
 private:
     void find_valid()
     {
-        while (current != end && !(*current)->chance(place).roll())
+        while (current != end && !_vault_chance_roll(**current, place))
             ++current;
     }
 
@@ -1210,6 +1224,30 @@ mapref_vector random_chance_maps_in_depth(const level_id &place,
     map_selector sel = map_selector::by_depth_chance(place, extra);
     const vault_indices eligible = _eligible_maps_for_selector(sel);
     return _random_chance_maps_in_list(sel, eligible);
+}
+
+mapref_vector random_chance_maps_for_stand_in(const level_id &standin,
+                                              bool (*want)(const map_def &))
+{
+    // Select and roll as if building `standin`; the maps are placed on the
+    // current floor. Layouts are still checked against the current floor
+    // when a chance group is resolved.
+    const map_selector sel = map_selector::by_depth_chance(standin,
+                                                           maybe_bool::maybe);
+    set<string> chance_tags;
+    mapref_vector chosen;
+    for (const unsigned i : _eligible_maps_for_selector(sel))
+    {
+        const map_def &map = vdefs[i];
+        if (!want(map) || !_vault_chance_new(map, standin, chance_tags)
+            || !map.chance(standin).roll())
+        {
+            continue;
+        }
+        if (const map_def *resolved = _resolve_chance_vault(sel, &map))
+            chosen.push_back(resolved);
+    }
+    return chosen;
 }
 
 const map_def *random_map_for_tag(const string &tag,

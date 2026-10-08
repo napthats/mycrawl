@@ -19,6 +19,7 @@
 #include "message.h"
 #include "notes.h"
 #include "prompt.h"
+#include "rapid-descent.h"
 #include "religion.h"
 #include "shopping.h"
 #include "state.h"
@@ -233,7 +234,9 @@ int zin_tithe(const item_def& item, int quant, bool converting)
             tithe *= 47;
             denom *= 20 + env.absdepth0;
         }
-        gain_piety(tithe * 3, denom);
+        // mycrawl: Rapid Descent already makes up for the skipped floors'
+        // gold, so don't scale the piety it brings as well.
+        gain_piety(rapid_descent_unscale(tithe * 3), denom);
     }
     you.attribute[ATTR_TITHE_BASE] = due;
     return taken;

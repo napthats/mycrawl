@@ -8,7 +8,10 @@
 #include "rapid-descent.h"
 
 #include "branch.h"
+#include "item-def.h"
+#include "item-prop-enum.h"
 #include "player.h"
+#include "potion-type.h"
 #include "random.h"
 #include "religion.h"
 #include "state.h"
@@ -174,4 +177,72 @@ int rapid_descent_modify_piety(int piety)
         return piety;
 
     return rapid_descent_scale(piety);
+}
+
+vector<level_id> rapid_descent_stand_ins(const level_id &lev)
+{
+    vector<level_id> stand_ins;
+    if (lev.branch < 0 || lev.branch >= NUM_BRANCHES
+        || !_kept_floors(lev.branch) || level_is_skipped(lev))
+    {
+        return stand_ins;
+    }
+
+    const branch_type br = lev.branch;
+    if (lev.depth == branch_first_depth(br))
+        for (int depth = 1; depth < lev.depth; ++depth)
+            stand_ins.emplace_back(br, depth);
+    for (int depth = lev.depth + 1;
+         depth < brdepth[br] && level_is_skipped(level_id(br, depth));
+         ++depth)
+    {
+        stand_ins.emplace_back(br, depth);
+    }
+    return stand_ins;
+}
+
+int rapid_descent_rolls(const level_id &lev)
+{
+    return 1 + rapid_descent_stand_ins(lev).size();
+}
+
+int rapid_descent_good_items()
+{
+    const int floors = rapid_descent_stand_ins(level_id::current()).size();
+    return div_rand_round(floors * RAPID_DESCENT_GOOD_ITEMS, 100);
+}
+
+/// Does this consumable give lasting power rather than help in a fight?
+static bool _is_lasting_consumable(const item_def &item)
+{
+    if (item.base_type == OBJ_SCROLLS)
+    {
+        switch (item.sub_type)
+        {
+        case SCR_ENCHANT_ARMOUR:
+        case SCR_ENCHANT_WEAPON:
+        case SCR_BRAND_WEAPON:
+        case SCR_ACQUIREMENT:
+            return true;
+        default:
+            return false;
+        }
+    }
+    return item.base_type == OBJ_POTIONS && item.sub_type == POT_EXPERIENCE;
+}
+
+bool rapid_descent_keep_floor_item(const item_def &item)
+{
+    if (!_kept_floors(level_id::current().branch))
+        return true;
+
+    if (item.base_type != OBJ_SCROLLS && item.base_type != OBJ_POTIONS
+        && item.base_type != OBJ_WANDS)
+    {
+        return true;
+    }
+    if (_is_lasting_consumable(item))
+        return true;
+
+    return x_chance_in_y(RAPID_DESCENT_CONSUMABLE_KEEP, 100);
 }

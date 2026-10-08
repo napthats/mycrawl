@@ -6,13 +6,17 @@
  * of every branch. The floors that remain keep their usual level_ids, so they
  * are built exactly like the same floors in Descent; only the stairs skip the
  * missing floors. To make up for the lost floors, each remaining floor gives
- * more experience, piety and floor items (see rapid_descent_scale()).
+ * more experience, piety and floor items (see rapid_descent_scale()), and
+ * also rolls for the shops, portals and good items of the floors it stands in
+ * for (see rapid_descent_stand_ins()).
 **/
 
 #pragma once
 
 #include "branch-type.h"
 #include "level-id.h"
+
+struct item_def;
 
 // Is this floor left out of the current game? Always false outside Rapid
 // Descent, and for floors past the bottom of a branch.
@@ -45,3 +49,25 @@ int rapid_descent_unscale(int amount);
 int rapid_descent_modify_piety(int piety);
 // How many items to place on the floor of the level being built.
 int rapid_descent_floor_items(int amount);
+
+// Each skipped floor that a floor stands in for adds this percentage of a
+// good item (like the '|' vault glyph) to its floor items. This makes up for
+// the artefacts in the skipped floors' vaults.
+const int RAPID_DESCENT_GOOD_ITEMS = 50;
+// Fewer floors mean fewer fights, so fewer of the scrolls, potions and wands
+// that are used up in fights are needed. Those among the floor items are kept
+// with this chance (in percent); the ones that give lasting power are kept.
+const int RAPID_DESCENT_CONSUMABLE_KEEP = 50;
+
+// The skipped floors a floor stands in for: those below it down to the next
+// floor the game uses, and those above it if it is the first floor of its
+// branch. Empty outside Rapid Descent's shortened branches.
+vector<level_id> rapid_descent_stand_ins(const level_id &lev);
+// How many times a floor rolls for shops and portals: once for itself and
+// once for each floor it stands in for.
+int rapid_descent_rolls(const level_id &lev);
+// How many good items to add to the floor of the level being built.
+int rapid_descent_good_items();
+// Should this item, made by the floor item builder for the level being
+// built, be placed? Always true outside Rapid Descent's shortened branches.
+bool rapid_descent_keep_floor_item(const item_def &item);

@@ -97,6 +97,7 @@ static bool _builder_by_type();
 static bool _builder_normal();
 static void _builder_items();
 static void _builder_monsters();
+static object_class_type _superb_object_class();
 static coord_def _place_specific_feature(dungeon_feature_type feat);
 static void _place_specific_trap(const coord_def& where, trap_spec* spec,
                                  int charges = 0);
@@ -3450,11 +3451,47 @@ static void _slime_connectivity_fixup()
     }
 }
 
+// mycrawl: the CHANCE maps that a Rapid Descent floor also rolls for each
+// skipped floor it stands in for: the portal entries.
+static bool _rapid_descent_stand_in_chance_map(const map_def &map)
+{
+    static const set<string> portal_tags =
+    {
+        "chance_sewer", "chance_ossuary", "chance_bailey", "chance_icecave",
+        "chance_volcano", "chance_wizlab", "chance_desolation",
+        "chance_necropolis",
+    };
+    return portal_tags.count(vault_chance_tag(map))
+           || map.has_tag("uniq_gauntlet");
+}
+
+static bool _same_chance_map(const map_def &a, const map_def &b)
+{
+    const string tag = vault_chance_tag(a);
+    return tag.empty() ? a.name == b.name : tag == vault_chance_tag(b);
+}
+
 // Place vaults with CHANCE: that want to be placed on this level.
 static void _place_chance_vaults()
 {
     const level_id &lid(level_id::current());
     mapref_vector maps = random_chance_maps_in_depth(lid);
+    // mycrawl: roll the portals of the floors this one stands in for too.
+    for (const level_id &standin : rapid_descent_stand_ins(lid))
+    {
+        for (const map_def *map : random_chance_maps_for_stand_in(
+                 standin, _rapid_descent_stand_in_chance_map))
+        {
+            if (none_of(maps.begin(), maps.end(),
+                        [map](const map_def *m)
+                        { return _same_chance_map(*m, *map); }))
+            {
+                dprf(DIAG_DNGN, "Rapid Descent stand-in for %s: %s",
+                     standin.describe().c_str(), map->name.c_str());
+                maps.push_back(map);
+            }
+        }
+    }
     // [ds] If there are multiple CHANCE maps that share an luniq_ or
     // uniq_ tag, only the first such map will be placed. Shuffle the
     // order of chosen maps so we don't have a first-map bias.
@@ -4364,9 +4401,27 @@ static void _builder_items()
     {
         int item = items(true, specif_type, OBJ_RANDOM, items_levels);
 
+        // mycrawl: Rapid Descent has fewer fights, so it leaves out some of
+        // the consumables. Decide before placing: a placed item can merge
+        // into a vault's stack.
+        if (item != NON_ITEM && !rapid_descent_keep_floor_item(env.item[item]))
+        {
+            destroy_item(item);
+            continue;
+        }
+
         _randomly_place_item(item);
     }
 
+    // mycrawl: good items for the vaults of the floors that Rapid Descent
+    // skipped and this one stands in for, made like the '|' vault glyph.
+    for (int n = rapid_descent_good_items(); n > 0; --n)
+    {
+        const int item = items(true, _superb_object_class(), OBJ_RANDOM,
+                               ISPEC_GOOD_ITEM);
+        if (item != NON_ITEM)
+            _randomly_place_item(item);
+    }
 }
 
 static bool _connect_vault_exit(const coord_def& exit)

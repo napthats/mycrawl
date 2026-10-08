@@ -2707,16 +2707,21 @@ void apply_exp()
     if (crawl_state.game_is_sprint())
         skill_xp = sprint_modify_exp(skill_xp);
 
+    // mycrawl: what recharges with experience is used up in fights, and Rapid
+    // Descent has fewer of them; recharge as if the experience weren't scaled
+    // up for the skipped floors.
+    const unsigned int recharge_xp = rapid_descent_unscale(skill_xp);
+
     // xp-gated effects that use sprint inflation
-    _recharge_xp_evokers(skill_xp);
+    _recharge_xp_evokers(recharge_xp);
     _reduce_abyss_xp_timer(skill_xp);
     _handle_hp_drain(skill_xp);
     _handle_banes(skill_xp);
     _handle_ostracism(skill_xp);
-    _handle_breath_recharge(skill_xp);
-    _handle_cacophony_recharge(skill_xp);
-    _handle_batform_recharge(skill_xp);
-    _handle_watery_grave_recharge(skill_xp);
+    _handle_breath_recharge(recharge_xp);
+    _handle_cacophony_recharge(recharge_xp);
+    _handle_batform_recharge(recharge_xp);
+    _handle_watery_grave_recharge(recharge_xp);
 
     if (player_under_penance(GOD_HEPLIAKLQANA))
         return; // no xp for you!
