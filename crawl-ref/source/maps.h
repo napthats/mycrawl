@@ -43,6 +43,10 @@ const map_def *random_map_for_tag(const string &tag,
                                   maybe_bool extra = maybe_bool::maybe);
 mapref_vector random_chance_maps_in_depth(const level_id &place,
                                           maybe_bool extra = maybe_bool::maybe);
+// mycrawl (experiment): the CHANCE maps accepted by `want` that a floor left
+// out by Rapid Descent would have rolled.
+mapref_vector random_chance_maps_for_stand_in(const level_id &standin,
+                                              bool (*want)(const map_def &));
 
 void dgn_ignore_depth(bool b);
 

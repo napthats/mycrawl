@@ -21,6 +21,7 @@
 #include "libutil.h"
 #include "mapmark.h"
 #include "maps.h"
+#include "rapid-descent.h"
 #include "shout.h"
 #include "spl-util.h"
 #include "state.h"
@@ -1786,6 +1787,18 @@ LUAFN(dgn_state_is_descent)
     return 1;
 }
 
+// mycrawl (experiment): how many times the current floor rolls for portals
+// placed by Lua (Vaults rooms): once, plus once for each skipped floor it
+// stands in for when the "portals" Rapid Descent loot flag is on.
+LUAFN(dgn_rapid_descent_portal_rolls)
+{
+    int rolls = 1;
+    if (rapid_descent_loot("portals"))
+        rolls += rapid_descent_stand_ins(level_id::current()).size();
+    lua_pushnumber(ls, rolls);
+    return 1;
+}
+
 const struct luaL_Reg dgn_dlib[] =
 {
 { "reset_level", _dgn_reset_level },
@@ -1904,6 +1917,7 @@ const struct luaL_Reg dgn_dlib[] =
 { "apply_tide", dgn_apply_tide },
 
 { "is_descent", dgn_state_is_descent },
+{ "rapid_descent_portal_rolls", dgn_rapid_descent_portal_rolls },
 
 { nullptr, nullptr }
 };

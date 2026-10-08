@@ -12,6 +12,7 @@
 #include "random.h"
 #include "religion.h"
 #include "state.h"
+#include "stringutil.h"
 
 /**
  * The floors of each branch that Rapid Descent keeps; any other floor of a
@@ -153,8 +154,9 @@ int rapid_descent_floor_items(int amount)
 
     int num, den;
     rapid_descent_ratio(lev, num, den);
-    return div_rand_round(amount * num * RAPID_DESCENT_ITEM_BONUS,
-                          den * 100);
+    const int bonus = rapid_descent_loot_value("bonus",
+                                               RAPID_DESCENT_ITEM_BONUS);
+    return div_rand_round(amount * num * bonus, den * 100);
 }
 
 int rapid_descent_unscale(int amount)
@@ -174,4 +176,73 @@ int rapid_descent_modify_piety(int piety)
         return piety;
 
     return rapid_descent_scale(piety);
+}
+
+// ---------------------------------------------------------------------------
+// Experimental loot compensations
+// ---------------------------------------------------------------------------
+
+static const map<string, int> &_loot_flags()
+{
+    static const map<string, int> flags = []
+    {
+        map<string, int> parsed;
+        const char *env = getenv("RAPID_DESCENT_LOOT");
+        if (!env)
+            return parsed;
+        for (const string &part : split_string(",", env))
+        {
+            const vector<string> kv = split_string(":", part);
+            if (kv.empty() || kv[0].empty())
+                continue;
+            parsed[kv[0]] = kv.size() > 1 ? atoi(kv[1].c_str()) : -1;
+        }
+        return parsed;
+    }();
+    return flags;
+}
+
+bool rapid_descent_loot(const string &flag)
+{
+    return crawl_state.game_is_rapid_descent() && _loot_flags().count(flag);
+}
+
+int rapid_descent_loot_value(const string &flag, int def)
+{
+    if (!rapid_descent_loot(flag))
+        return def;
+    const int value = _loot_flags().at(flag);
+    return value < 0 ? def : value;
+}
+
+vector<level_id> rapid_descent_stand_ins(const level_id &lev)
+{
+    vector<level_id> stand_ins;
+    if (lev.branch < 0 || lev.branch >= NUM_BRANCHES
+        || !_kept_floors(lev.branch) || level_is_skipped(lev))
+    {
+        return stand_ins;
+    }
+
+    const branch_type br = lev.branch;
+    if (lev.depth == branch_first_depth(br))
+        for (int depth = 1; depth < lev.depth; ++depth)
+            stand_ins.emplace_back(br, depth);
+    for (int depth = lev.depth + 1;
+         depth < brdepth[br] && level_is_skipped(level_id(br, depth));
+         ++depth)
+    {
+        stand_ins.emplace_back(br, depth);
+    }
+    return stand_ins;
+}
+
+int rapid_descent_standin_items(const string &flag)
+{
+    if (!rapid_descent_loot(flag))
+        return 0;
+
+    // One item per skipped floor this floor stands in for, at 100%.
+    const int floors = rapid_descent_stand_ins(level_id::current()).size();
+    return div_rand_round(floors * rapid_descent_loot_value(flag, 100), 100);
 }

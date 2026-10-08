@@ -97,6 +97,7 @@ static bool _builder_by_type();
 static bool _builder_normal();
 static void _builder_items();
 static void _builder_monsters();
+static object_class_type _superb_object_class();
 static coord_def _place_specific_feature(dungeon_feature_type feat);
 static void _place_specific_trap(const coord_def& where, trap_spec* spec,
                                  int charges = 0);
@@ -3450,11 +3451,62 @@ static void _slime_connectivity_fixup()
     }
 }
 
+// mycrawl (experiment): which CHANCE maps a Rapid Descent floor also rolls
+// for the skipped floors it stands in for.
+static bool _rapid_descent_stand_in_chance_map(const map_def &map)
+{
+    const string tag = vault_chance_tag(map);
+    if (rapid_descent_loot("portals"))
+    {
+        static const set<string> portal_tags =
+        {
+            "chance_sewer", "chance_ossuary", "chance_bailey",
+            "chance_icecave", "chance_volcano", "chance_wizlab",
+            "chance_desolation", "chance_necropolis",
+        };
+        if (portal_tags.count(tag) || map.has_tag("uniq_gauntlet"))
+            return true;
+    }
+    // In practice this only restores the Abyss gate that Descent always has
+    // on Depths:3: Depths:2, which stands in for it, has a Pan gate anyway.
+    if (rapid_descent_loot("gates")
+        && (tag == "chance_enter_abyss" || tag == "chance_enter_pan"))
+    {
+        return true;
+    }
+    return false;
+}
+
+static bool _same_chance_map(const map_def &a, const map_def &b)
+{
+    const string tag = vault_chance_tag(a);
+    return tag.empty() ? a.name == b.name : tag == vault_chance_tag(b);
+}
+
 // Place vaults with CHANCE: that want to be placed on this level.
 static void _place_chance_vaults()
 {
     const level_id &lid(level_id::current());
     mapref_vector maps = random_chance_maps_in_depth(lid);
+    // mycrawl (experiment): roll for the floors this one stands in for too.
+    if (rapid_descent_loot("portals") || rapid_descent_loot("gates"))
+    {
+        for (const level_id &standin : rapid_descent_stand_ins(lid))
+        {
+            for (const map_def *map : random_chance_maps_for_stand_in(
+                     standin, _rapid_descent_stand_in_chance_map))
+            {
+                if (none_of(maps.begin(), maps.end(),
+                            [map](const map_def *m)
+                            { return _same_chance_map(*m, *map); }))
+                {
+                    dprf(DIAG_DNGN, "Rapid Descent stand-in for %s: %s",
+                         standin.describe().c_str(), map->name.c_str());
+                    maps.push_back(map);
+                }
+            }
+        }
+    }
     // [ds] If there are multiple CHANCE maps that share an luniq_ or
     // uniq_ tag, only the first such map will be placed. Shuffle the
     // order of chosen maps so we don't have a first-map bias.
@@ -3511,6 +3563,24 @@ static void _place_minivaults()
                 _build_secondary_vault(vault);
         } // if ALL maps eligible are "extra" but fail to place, we'd be screwed
         while (vault && vault->is_extra_vault() && tries++ < 10000);
+
+        // mycrawl (experiment): also roll the minivaults of the floors this
+        // one stands in for.
+        if (rapid_descent_loot("minivaults"))
+        {
+            for (const level_id &standin
+                 : rapid_descent_stand_ins(level_id::current()))
+            {
+                tries = 0;
+                do
+                {
+                    vault = random_map_in_depth(standin, true);
+                    if (vault)
+                        _build_secondary_vault(vault);
+                }
+                while (vault && vault->is_extra_vault() && tries++ < 10000);
+            }
+        }
     }
 }
 
@@ -4367,6 +4437,30 @@ static void _builder_items()
         _randomly_place_item(item);
     }
 
+    // mycrawl (experiment): good items standing in for the vault loot of the
+    // floors Rapid Descent skipped. "standin" copies the '|' vault glyph;
+    // "targeted" aims at the classes measured to be short.
+    for (int n = rapid_descent_standin_items("standin"); n > 0; --n)
+    {
+        const int item = items(true, _superb_object_class(), OBJ_RANDOM,
+                               ISPEC_GOOD_ITEM);
+        if (item != NON_ITEM)
+            _randomly_place_item(item);
+    }
+    for (int n = rapid_descent_standin_items("targeted"); n > 0; --n)
+    {
+        const int roll = random2(100);
+        const int item =
+            roll < 10 ? items(true, OBJ_BOOKS, BOOK_MANUAL, ISPEC_GOOD_ITEM)
+                      : items(true,
+                              random_choose_weighted(40, OBJ_JEWELLERY,
+                                                     25, OBJ_WEAPONS,
+                                                     15, OBJ_ARMOUR,
+                                                     10, OBJ_STAVES),
+                              OBJ_RANDOM, ISPEC_GOOD_ITEM);
+        if (item != NON_ITEM)
+            _randomly_place_item(item);
+    }
 }
 
 static bool _connect_vault_exit(const coord_def& exit)
@@ -6440,7 +6534,14 @@ void place_spec_shop(const coord_def& where, shop_spec &spec, int shop_level)
 
     _set_grd(where, DNGN_ENTER_SHOP);
 
-    const int num_items = _shop_num_items(spec);
+    int num_items = _shop_num_items(spec);
+    // mycrawl (experiment): stock for the floors this one stands in for too.
+    if (rapid_descent_loot("bigshops") && !spec.gozag
+        && spec.num_items == -1 && !spec.use_all)
+    {
+        num_items = min(26, num_items * (1 + (int)rapid_descent_stand_ins(
+                                                 level_id::current()).size()));
+    }
 
     // For books shops, store how many copies of a given book are on display.
     // This increases the diversity of books in a shop.

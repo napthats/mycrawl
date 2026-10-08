@@ -45,3 +45,22 @@ int rapid_descent_unscale(int amount);
 int rapid_descent_modify_piety(int piety);
 // How many items to place on the floor of the level being built.
 int rapid_descent_floor_items(int amount);
+
+// ---------------------------------------------------------------------------
+// Experimental loot compensations (branch claude/rapid-descent-loot-experiments)
+//
+// Chosen at run time by the RAPID_DESCENT_LOOT environment variable: a comma-
+// separated list of flags, each with an optional ":value", for example
+// RAPID_DESCENT_LOOT="shops,portals,standin:100". Unset means none. See
+// docs/rapid_descent_loot_experiments.md for the flags and measurements.
+// ---------------------------------------------------------------------------
+
+// Is this experimental flag on? Always false outside Rapid Descent.
+bool rapid_descent_loot(const string &flag);
+// The flag's value, or `def` if it is on without a value or off.
+int rapid_descent_loot_value(const string &flag, int def);
+// The skipped floors a kept floor stands in for: those below it down to the
+// next kept floor, and those above it if it is the branch's first kept floor.
+vector<level_id> rapid_descent_stand_ins(const level_id &lev);
+// How many extra good ("|"-style) items the floor being built gets.
+int rapid_descent_standin_items(const string &flag);
