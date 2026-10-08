@@ -96,6 +96,10 @@ public:
     bool is_arte;
     bool in_shop;
     bool held_mons;
+    // mycrawl (experiment): shop value of the identified item (a proxy for
+    // its quality) and whether it is an unrandart.
+    int value;
+    bool is_unrand;
 };
 
 static level_id all_lev(NUM_BRANCHES, -1);
@@ -111,48 +115,60 @@ static map<item_base_type, vector<string> > item_fields = {
         { "Num", "NumVault", "NumMons", "NumMin", "NumMax", "NumSD" }
     },
     { ITEM_SCROLLS,
-        { "Num", "NumVault", "NumShop", "NumMons", "NumMin", "NumMax", "NumSD" }
+        { "Num", "NumVault", "NumShop", "NumMons", "NumMin", "NumMax", "NumSD",
+            "Value", "ValueShop" }
     },
     { ITEM_POTIONS,
-        { "Num", "NumVault", "NumShop", "NumMons", "NumMin", "NumMax", "NumSD" }
+        { "Num", "NumVault", "NumShop", "NumMons", "NumMin", "NumMax", "NumSD",
+            "Value", "ValueShop" }
     },
     { ITEM_WANDS,
         { "Num", "NumVault", "NumShop", "NumMons", "NumMin", "NumMax", "NumSD",
-            "Chrg", "ChrgVault", "ChrgShop", "ChrgMons" },
+            "Chrg", "ChrgVault", "ChrgShop", "ChrgMons",
+            "Value", "ValueShop" },
     },
     { ITEM_WEAPONS,
         { "Num", "NumBrand", "NumArte", "NumVault", "NumShop", "NumMons",
             "NumMin", "NumMax", "NumSD", "Ench", "EnchBrand", "EnchArte",
-            "EnchVault", "EnchShop", "EnchMons" },
+            "EnchVault", "EnchShop", "EnchMons",
+            "Value", "ValueShop", "ValueArte", "NumUnrand" },
     },
     { ITEM_MISSILES,
         { "Num", "NumBrand", "NumVault", "NumShop", "NumMons", "Num",
-            "NumMin", "NumMax", "NumSD" },
+            "NumMin", "NumMax", "NumSD",
+            "Value", "ValueShop" },
     },
     { ITEM_STAVES,
         { "Num", "NumVault", "NumShop", "NumMons", "Num", "NumMin", "NumMax",
-            "NumSD" },
+            "NumSD",
+            "Value", "ValueShop" },
     },
     { ITEM_ARMOUR,
         { "Num", "NumBrand", "NumArte", "NumVault", "NumShop", "NumMons",
             "NumMin", "NumMax", "NumSD", "Ench", "EnchBrand", "EnchArte",
-            "EnchVault", "EnchShop", "EnchMons" }
+            "EnchVault", "EnchShop", "EnchMons",
+            "Value", "ValueShop", "ValueArte", "NumUnrand" }
     },
     { ITEM_JEWELLERY,
         { "Num", "NumArte", "NumVault", "NumShop", "NumMons", "NumMin",
-            "NumMax", "NumSD" },
+            "NumMax", "NumSD",
+            "Value", "ValueShop", "ValueArte", "NumUnrand" },
     },
     { ITEM_TALISMANS,
-        { "Num", "NumArte", "NumVault", "NumShop", "NumMin", "NumMax", "NumSD" },
+        { "Num", "NumArte", "NumVault", "NumShop", "NumMin", "NumMax", "NumSD",
+            "Value", "ValueShop", "ValueArte", "NumUnrand" },
     },
     { ITEM_MISCELLANY,
-        { "Num", "NumVault", "NumShop", "NumMin", "NumMax", "NumSD" },
+        { "Num", "NumVault", "NumShop", "NumMin", "NumMax", "NumSD",
+            "Value", "ValueShop" },
     },
     { ITEM_SPELLBOOKS,
-        { "Num", "NumVault", "NumShop", "NumMin", "NumMax", "NumSD" },
+        { "Num", "NumVault", "NumShop", "NumMin", "NumMax", "NumSD",
+            "Value", "ValueShop" },
     },
     { ITEM_MANUALS,
-        { "Num", "NumVault", "NumShop", "NumMin", "NumMax", "NumSD" },
+        { "Num", "NumVault", "NumShop", "NumMin", "NumMax", "NumSD",
+            "Value", "ValueShop" },
     },
     { ITEM_GEMS,
         { "Num", "NumVault", "NumShop", "NumMin", "NumMax", "NumSD" },
@@ -161,7 +177,8 @@ static map<item_base_type, vector<string> > item_fields = {
         { "Num", "NumVault", "NumShop", "NumMin", "NumMax", "NumSD" },
     },
     { ITEM_PARCHMENTS,
-        { "Num", "NumVault", "NumShop", "NumMin", "NumMax", "NumSD" },
+        { "Num", "NumVault", "NumShop", "NumMin", "NumMax", "NumSD",
+            "Value", "ValueShop" },
     },
 };
 
@@ -546,6 +563,19 @@ objstat_item::objstat_item(const item_def &item)
 
     if (base_type == ITEM_SPELLBOOKS)
         spells = spells_in_book(item);
+
+    is_unrand = is_unrandom_artefact(item);
+    switch (item.base_type)
+    {
+    case OBJ_WEAPONS: case OBJ_ARMOUR: case OBJ_JEWELLERY: case OBJ_STAVES:
+    case OBJ_TALISMANS: case OBJ_MISCELLANY: case OBJ_WANDS:
+    case OBJ_SCROLLS: case OBJ_POTIONS: case OBJ_BOOKS: case OBJ_MISSILES:
+        value = item_value(item, true);
+        break;
+    default:
+        value = 0;
+        break;
+    }
 }
 
 static void _init_monsters()
@@ -878,6 +908,17 @@ void objstat_record_item(const item_def &item)
         if (track_plus)
             _record_item_stat(objs_item, plus_field + "Mons", objs_item.plus);
     }
+
+    if (objs_item.value > 0)
+    {
+        _record_item_stat(objs_item, "Value", objs_item.value);
+        if (objs_item.in_shop)
+            _record_item_stat(objs_item, "ValueShop", objs_item.value);
+        if (_item_tracks_artefact(objs_item.base_type) && objs_item.is_arte)
+            _record_item_stat(objs_item, "ValueArte", objs_item.value);
+    }
+    if (objs_item.is_unrand)
+        _record_item_stat(objs_item, "NumUnrand", objs_item.quantity);
 
     _record_book_spells(objs_item);
     _record_parchment_spells(objs_item);
