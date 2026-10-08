@@ -414,12 +414,21 @@ piety には 2 つの役割があり、扱いを分けて考えます。
   `rapid_descent_modify_piety` を変えても変わりません。Uskayaw、Gozag、Xom、Ignis も
   対象外です。案を変えるときは、これらも明示的に決めます。
 
-**XP で充填される道具と種族・変身の能力**: 「1 戦闘あたり」を Descent に揃える方法が
-あります。`apply_exp` の中でこれらの充填にだけ、×r を戻した経験値（`rapid_descent_unscale`）を
-使います。
+**決定: piety は今の ×r のまま。XP で充填されるものは消耗品と同じ水準にする。**
 
-- 呪文の練習による piety を補正なしにしたのと同じ考え方で、変更は数行です。
-- こうした場合、消耗品の目標は 0.75 寄りにできます。
+- **方法**: `apply_exp` で、次の充填にだけ ×r を戻した経験値（`rapid_descent_unscale`）を
+  使います。呪文の練習による piety を補正なしにしたのと同じ考え方で、変更は数行です。
+  - 雑貨（evocable）の充填（`_recharge_xp_evokers`）
+  - ドラコニアンとドラゴン変身のブレス（`_handle_breath_recharge`）
+  - cacophony、bat form、watery grave（`_handle_cacophony_recharge` ほか）
+- **結果**: 1 撃破あたりの充填は Descent と同じになり、1 ゲームの合計は補正前の経験値の比
+  （0.68）になります。床の消耗品（0.69）とほぼ同じです。×0.7 のような係数を別に決める
+  必要はありません。
+- **そのままにするもの**:
+  - 経験値で治る不利な状態（drain による最大 HP の減少、bane、ostracism）は ×r のまま
+    にします。経験値で消える罰なので、戦術資源とは扱いを分けます。
+  - 罰（penance、神の怒り）と evolution の変異も ×r のままです。
+  - Abyss の出口の時間は、Abyss が短縮していない branch なので、もともと補正がかかりません。
 
 ## 6. 実装する場合の案（未実装）
 
