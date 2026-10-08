@@ -10,6 +10,7 @@ runs only (nothing is generated here).
     python3 -I targets.py RESDIR danger  descent rapid KILLFRACTION
     python3 -I targets.py RESDIR piety   descent rapid KILLFRACTION
     python3 -I targets.py RESDIR shops   descent RUN [RUN...]
+    python3 -I targets.py RESDIR thin    descent rapid RUN KEEP [PORTALRUN]
 
 roles:  scrolls, potions and wands by role (see ROLE), route totals per game
         and ratios to the first run (all items / not in shops).
@@ -31,6 +32,15 @@ piety:  kill piety of a god like Trog (natural monsters, at most one point
         where six stars (160) are reached, and the piety left over after
         that for abilities, in total and per kill.
 shops:  shop stock per item class.
+thin:   RUN (e.g. C2) with every scroll, potion and wand that _builder_items
+        places on Rapid Descent's floors kept with chance KEEP, except the
+        permanent ones. The floor items in RUN are estimated per floor from
+        rapid against descent: they are the only difference on a kept floor,
+        f = r x 1.25 of Descent's (1.25 on a branch's last floor), so they are
+        f / (f - 1) x (rapid - descent). Slime has no floor items and Orc's
+        are all gold. RUN must use the default bonus (125%). Prints every
+        category against Descent, with the portal contents if PORTALRUN (the
+        portal-loot run) is given.
 The route and its weights are those of analyze.py."""
 import os
 import sys
@@ -393,10 +403,185 @@ def shops(runs):
     print("%-16s" % "total" + "".join("%12.2f" % v for v in tot))
 
 
+THIN_EXEMPT = {"permanent"}
+NO_FLOOR_CONSUMABLES = {"Slime", "Orc"}  # brflag::no_items; Orc: all gold
+
+
+def _batches(run, cls, key, field):
+    """Per batch: {(branch, depth): value} for one item key."""
+    out = []
+    for rows in run.files("objstat_%s.tsv" % cls):
+        lv = {}
+        for lev, d in rows.get(key, {}).items():
+            m = A.LEVRE.match(lev)
+            if m and m.group(1) in A.W:
+                lv[(m.group(1), int(m.group(2)))] = d.get(field, 0.0)
+        out.append(lv)
+    return out
+
+
+def _route_sum(levels):
+    return sum(A.W[br] * v for (br, _), v in levels.items())
+
+
+def _floor_items(base, rapid, cls, key, field="Num"):
+    """Per batch pair: the floor items Rapid Descent places on the route."""
+    out = []
+    for d, r in zip(_batches(base, cls, key, field),
+                    _batches(rapid, cls, key, field)):
+        tot = 0.0
+        for (br, depth), vr in r.items():
+            if br in NO_FLOOR_CONSUMABLES or not _is_kept(br, depth):
+                continue
+            f = A.ratio(br, depth, True) * 1.25
+            tot += A.W[br] * f * (vr - d.get((br, depth), 0.0)) / (f - 1)
+        out.append(tot)
+    return out
+
+
+def _stat(vals):
+    n = len(vals)
+    m = sum(vals) / n
+    se = (sum((x - m) ** 2 for x in vals) / (n - 1) / n) ** 0.5 if n > 1 else 0
+    return m, se
+
+
+def _ratio(num, den):
+    (a, sa), (b, sb) = _stat(num), _stat(den)
+    rel = a / b
+    return rel, rel * ((sa / a if a else 0) ** 2 + (sb / b) ** 2) ** 0.5
+
+
+def thin(base, rapid, run, keep, portal_run=None):
+    agg = {}
+
+    def add(key, vals):
+        a = agg.setdefault(key, [[0.0] * len(vals[0]) for _ in range(3)])
+        for i in range(3):
+            a[i] = [x + y for x, y in zip(a[i], vals[i])]
+
+    print("Scrolls, potions and wands (route, per game; ratios to Descent;"
+          " floor = floor items in %s)" % run.name)
+    print("%-28s %-10s %8s %7s %14s %15s"
+          % ("item", "role", "Descent", "floor", run.name, "thinned"))
+    for cls in CONSUMABLES:
+        for name in _subtypes(base, cls):
+            role = ROLE.get(name, "tactical")
+            d = [_route_sum(b) for b in _batches(base, cls, name, "Num")]
+            c = [_route_sum(b) for b in _batches(run, cls, name, "Num")]
+            fl = _floor_items(base, rapid, cls, name)
+            t = c if role in THIN_EXEMPT else \
+                [x - (1 - keep) * y for x, y in zip(c, fl)]
+            for key in (role, "all " + cls.lower(),
+                        "all consumables", "thinned" if role not in
+                        THIN_EXEMPT else "not thinned"):
+                add(key, (d, c, t))
+            add(("by class", cls, role), (d, c, t))
+            rc, sc = _ratio(c, d)
+            rt, st = _ratio(t, d)
+            print("%-28s %-10s %8.2f %7.2f %7.3f+-%.3f %8.3f+-%.3f"
+                  % (name[:28], role, _stat(d)[0], _stat(fl)[0], rc, sc,
+                     rt, st))
+    print()
+    print("%-22s %8s %14s %15s" % ("group", "Descent", run.name, "thinned"))
+    for key in sorted(k for k in agg if isinstance(k, str)):
+        d, c, t = agg[key]
+        rc, sc = _ratio(c, d)
+        rt, st = _ratio(t, d)
+        print("%-22s %8.2f %7.3f+-%.3f %8.3f+-%.3f"
+              % (key, _stat(d)[0], rc, sc, rt, st))
+
+    # Wand charges: Chrg is the mean charges per wand of a row.
+    def charges(r):
+        out = []
+        for num, chrg in zip(_batches(r, "Wands", "All Wands", "Num"),
+                             _batches(r, "Wands", "All Wands", "Chrg")):
+            out.append({k: v * chrg.get(k, 0.0) for k, v in num.items()})
+        return out
+    cd, cr, cc = charges(base), charges(rapid), charges(run)
+    fl = []
+    for d, r in zip(cd, cr):
+        tot = 0.0
+        for (br, depth), vr in r.items():
+            if br in NO_FLOOR_CONSUMABLES or not _is_kept(br, depth):
+                continue
+            f = A.ratio(br, depth, True) * 1.25
+            tot += A.W[br] * f * (vr - d.get((br, depth), 0.0)) / (f - 1)
+        fl.append(tot)
+    d = [_route_sum(x) for x in cd]
+    c = [_route_sum(x) for x in cc]
+    t = [x - (1 - keep) * y for x, y in zip(c, fl)]
+    print("%-22s %8.2f %7.3f+-%.3f %8.3f+-%.3f"
+          % ("wand charges", _stat(d)[0], *_ratio(c, d), *_ratio(t, d)))
+
+    print()
+    print("Everything else is the same as in %s:" % run.name)
+    for label, fname, key, field, xp in A.METRICS:
+        if fname in ("objstat_Scrolls.tsv", "objstat_Potions.tsv",
+                     "objstat_Wands.tsv"):
+            continue
+        keys = None
+        if key is None and fname is not None:
+            keys = list(A.PORTALS) if label.startswith("Portals") \
+                else list(A.GATES)
+        bm, bse = base.metric(fname, key, field, xp, keys)
+        m, se = run.metric(fname, key, field, xp, keys)
+        rel = m / bm
+        rse = rel * ((se / m if m else 0) ** 2 + (bse / bm) ** 2) ** 0.5
+        print("%-22s %10.4g %7.3f+-%.3f" % (label, bm, rel, rse))
+    arte = [("objstat_Weapons.tsv", "All Weapons"),
+            ("objstat_Armour.tsv", "All Armour"),
+            ("objstat_Jewellery.tsv", "All Jewellery"),
+            ("objstat_Talismans.tsv", "All Talismans")]
+    ab = sum(base.metric(f, k, "NumArte")[0] for f, k in arte)
+    ar = sum(run.metric(f, k, "NumArte")[0] for f, k in arte)
+    print("%-22s %10.4g %7.3f" % ("Artefacts (all)", ab, ar / ab))
+
+    if not portal_run:
+        return
+    import portal_loot as P
+    loot, _ = P.per_portal(*portal_run)
+    inv = {v: k for k, v in A.PORTALS.items()}
+
+    def portal(r, col):
+        return sum(r.metric("objstat_Features.tsv", inv[p])[0] * loot[p][col]
+                   for p in P.LEVEL)
+    print()
+    print("Portal contents per game (unchanged), and totals with them:")
+    for col, label, dungeon in [
+            ("Scrolls", "scrolls", agg["all scrolls"]),
+            ("Potions", "potions", agg["all potions"]),
+            ("Wands", "wands", agg["all wands"])]:
+        pd, pr = portal(base, col), portal(run, col)
+        d = _stat(dungeon[0])[0] + pd
+        t = _stat(dungeon[2])[0] + pr
+        c = _stat(dungeon[1])[0] + pr
+        print("%-22s portals %5.2f / %5.2f   with portals: Descent %7.2f"
+              "  %s %.3f  thinned %.3f" % (label, pd, pr, d, run.name,
+                                           c / d, t / d))
+    for col, fname, key, field in [
+            ("Artefacts", None, None, "NumArte"),
+            ("Jewellery", "objstat_Jewellery.tsv", "All Jewellery", "Num")]:
+        pd, pr = portal(base, col), portal(run, col)
+        if fname:
+            bd, br_ = base.metric(fname, key, field)[0], \
+                run.metric(fname, key, field)[0]
+        else:
+            bd, br_ = ab, ar
+        print("%-22s portals %5.2f / %5.2f   with portals: Descent %7.2f"
+              "  ratio %.3f" % (col.lower(), pd, pr, bd + pd,
+                                (br_ + pr) / (bd + pd)))
+
+
 def main():
     resdir, what = sys.argv[1], sys.argv[2]
     if what == "xl":
         xl(A.Run(resdir, sys.argv[3]), float(sys.argv[4]))
+        return
+    if what == "thin":
+        thin(A.Run(resdir, sys.argv[3]), A.Run(resdir, sys.argv[4]),
+             A.Run(resdir, sys.argv[5]), float(sys.argv[6]),
+             (resdir, sys.argv[7]) if len(sys.argv) > 7 else None)
         return
     if what == "fights":
         fights(A.Run(resdir, sys.argv[3]), A.Run(resdir, sys.argv[4]))
